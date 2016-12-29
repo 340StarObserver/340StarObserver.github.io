@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>nginx代理多个flask</title>
+	<meta name="description" content="本文讲述如何用nginx代理多个flask，从而进行负载均衡">
+	
+	<link rel="canonical" href="http://localhost:4000/2016/09/09/Nginx-Proxy/">
+	<link rel="alternate" type="application/rss+xml" title="Principality Of 340号恒星观测员" href="http://localhost:4000/feed.xml" />
+	
+	<!-- <link rel="stylesheet" href="/css/main.css"> -->
+    
+    <link rel="stylesheet" type="text/css" href="/static/css/bootstrap.min.css">
+    <link rel="stylesheet" type="text/css" href="/static/css/index.css">
+	<script type="text/javascript" src="/static/js/jquery-1.11.1.min.js"></script>
+	<script type="text/javascript" src="/static/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="/static/css/monokai_sublime.min.css">
+	<script type="text/javascript" src="/static/js/highlight.min.js"></script>
+
+    <!--
+    <link rel="stylesheet" type="text/css" href="http://apps.bdimg.com/libs/bootstrap/3.3.0/css/bootstrap.min.css">
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/jquery/2.1.1/jquery.min.js"></script>
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/bootstrap/3.3.0/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="http://apps.bdimg.com/libs/highlight.js/8.4/styles/monokai_sublime.min.css">
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/highlight.js/8.4/highlight.min.js"></script>
+    -->
+    
+	<script type="text/javascript" src="/static/js/index.js"></script>
+	<script>hljs.initHighlightingOnLoad();</script>
+</head>
+
+ <!--  <body data-spy="scroll" data-target="#myAffix"> -->
+  <body>
+
+    <header>
+
+<!-- navbar -->
+  <nav class="navbar navbar-inverse">
+  <div class="container">
+    <!-- Brand and toggle get grouped for better mobile display -->
+    <div class="navbar-header">
+      <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#bs-example-navbar-collapse-1">
+        <span class="sr-only">Toggle navigation</span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+      </button>
+      <a class="navbar-brand" href="/">Principality Of 340号恒星观测员</a>
+      <p class="navbar-text"></p>
+    </div>
+    <!-- Collect the nav links, forms, and other content for toggling -->
+    <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
+      <ul class="nav navbar-nav navbar-right">
+
+        
+          <li>
+        
+        <a href="/">Home</a></li>
+
+        
+          
+            
+              <li>
+            
+            <a href="/projects/"><span class="glyphicon "></span> Projects</a></li>
+          
+        
+          
+            
+              <li>
+            
+            <a href="/about/"><span class="glyphicon "></span> About</a></li>
+          
+        
+          
+        
+          
+        
+      </ul>
+    </div><!-- /.navbar-collapse -->
+  </div><!-- /.container-fluid -->
+</nav>
+
+</header>
+
+    <div id="main" class="container main">
+      <div class="row">
+  <div id="myArticle" class="col-sm-9">
+    <div class="post-area post">
+      <header>
+        <h1>nginx代理多个flask</h1>
+        <p>Sep 9, 2016</p>
+      </header>
+      <hr>
+      <article>
+        <p>本文讲述如何用nginx代理多个flask，从而进行负载均衡</p>
+
+<p>所需准备 :</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>1. nginx  
+
+        它安装依赖的东西还不少，可以参考 http://www.cnblogs.com/skynet/p/4146083.html  
+
+2. flask  
+
+        sudo pip install Flask  
+
+3. uwsgi  
+
+        sudo pip install uwsgi  
+    
+        使用uwsgi的原因是，如果光溜溜的flask是很容易崩溃的，  
+        外面套一层uwsgi，实践检验能让flask强壮很多  
+    
+        若无法安装uwsgi这个库，则大多数原因是因为少了两个东西 :  
+    
+        ubuntu系列 :  
+            sudo apt-get install python-dev  
+            sudo apt-get install setuptools  
+    
+        centos系列 :  
+            sudo yum install python-devel  
+            sudo yum install setuptools  
+</code></pre>
+</div>
+
+<p>下面举个例子，讲讲具体的配置</p>
+
+<h3 id="flask">一.　flask程序的信息</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>1. 我的用flask库写的web服务端程序的根目录 :  
+
+        /home/seven/program/openmind_server/  
+
+2. 在这个目录下，我的程序的入口文件是 main.py  
+
+        即入口文件的绝对地址是 /home/seven/program/openmind_server/main.py  
+        
+        且为了使用方便，最好让这个脚本接受两个参数，分别作为这个进程绑定的地址和端口  
+        例如 :  
+        python main.py 127.0.0.1 8081  
+        python main.py 127.0.0.1 8082  
+
+3. 在这个脚本中，我的app的名称是 Server_App  
+
+        即 main.py 中，有类似这样的语句 :  
+        
+        Server_App = flask.Flask(__name__)  
+        Server_App.secret_key = '\r\x9d1\xd1\xccW\x9e\xa6\x9a\x97[\xb1=\x93\x87\x15s&lt;\xe8\xe3\x13DL?'  
+        
+        # 注意，若你的flask程序在不同的机子上（一般生产环境下都是这样，是真正的多机负载均衡）  
+        # 则，这个 secret_key 要保持一致，否则session可能无法正常工作  
+</code></pre>
+</div>
+
+<h3 id="uwsgi--uwsgi8081ini">二.　uwsgi配置文件  uwsgi8081.ini</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>[uwsgi]  
+
+socket = 127.0.0.1:8081  
+    绑定监听的地址和端口  
+        
+    实际生产环境下 :  
+        1. 建议nginx单独一台服务器，然后其他的flask都在同一网段的其他机子上  
+        2. uwsgi要在 nginx结点，及每台flask结点上 都要安装  
+        3. flask只要在每台flask结点上安装  
+        4. 这个uwsgi配置文件和对应的flask程序是在同一台机子上的  
+    
+
+master = true  
+
+pidfile = /mydata/openmind_server/pids/uwsgi8081.pid  
+    这个uwsgi进程的pid文件的路径（建议使用绝对路径）  
+
+chdir = /home/seven/program/openmind_server/  
+    你的用flask库编写的服务端程序的根目录的路径  
+    （建议使用绝对路径，且最后有'/'）  
+    （若flask程序位于不同机子上，则要保证各机子上的路径是一致的）  
+
+wsgi-file = main.py  
+    在上述目录下，你的入口脚本的名字  
+
+callable = Server_App  
+    在上述入口脚本中，你的flask的app对象的名字  
+
+processes = 2  
+    该值建议与CPU核数相同  
+
+threads = 4  
+    占用的线程数  
+
+stats = 127.0.0.1:9091  
+    查询状态信息的端口  
+
+logdate=true  
+
+daemonize=/mydata/openmind_server/logs/flask8081.log  
+    以后台方式运行，且指定日志文件的路径（建议使用绝对路径）  
+
+
+（ uwsgi8082.ini， uwsgi8083.ini， uwsgi8084.ini 与之类似，改端口和路径即可）  
+</code></pre>
+</div>
+
+<h3 id="nginx-usrlocalnginxconfnginxconf">三.　nginx配置文件 /usr/local/nginx/conf/nginx.conf</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>worker_processes  2;  
+    # 建议与CPU核数相同  
+
+error_log  /mydata/nginx/log/error.log;  
+    # 错误日志的路径（建议使用绝对路径）  
+    # 且除了它，在 /usr/local/nginx/logs/error.log 也有一部分的错误日志  
+
+pid        /mydata/nginx/pid/nginx.pid;  
+    # 进程号文件的路径（建议使用绝对路径）  
+
+events {  
+    use epoll;  
+        # epoll效率比轮询要高  
+    multi_accept on;  
+    worker_connections  1024;  
+        # 最大连接数  
+}  
+
+
+http {  
+    include       mime.types;  
+    default_type  application/octet-stream;  
+
+    server_names_hash_bucket_size 128;  
+    client_header_buffer_size 32k;  
+    client_body_buffer_size 512k;  
+    client_max_body_size 32m;  
+    large_client_header_buffers 4 32k;  
+
+    access_log  /mydata/nginx/log/access.log;  
+        # 访问日志路径（建议使用绝对路径）  
+
+    sendfile        on;  
+    tcp_nodelay on;  
+    server_tokens off;  
+    access_log off;  
+    charset UTF-8;  
+    keepalive_timeout  60;  
+
+    open_file_cache max=1024 inactive=20s;  
+    open_file_cache_valid 60s;  
+    open_file_cache_min_uses 2;  
+
+    upstream my_servers {  
+        server 127.0.0.1:8081;  
+        server 127.0.0.1:8082;  
+        server 127.0.0.1:8083;  
+        server 127.0.0.1:8084;  
+    }  
+    # 转发配置 :  
+    # 一共可以转发到本机的8081,8082,8083,8084四个结点上  
+    # 实际生产环境中建议flask结点在其他机子上  
+
+    server {  
+        listen       80;  
+            # 对外暴露80端口  
+        server_name  localhost default backlog=256;  
+        access_log  /mydata/nginx/log/host.access.log;  
+
+        location / {  
+            uwsgi_pass my_servers;  
+            include uwsgi_params;  
+            uwsgi_param UWSGI_CHDIR /home/seven/program/openmind_server/;  
+            uwsgi_param UWSGI_SCRIPT main;  
+        }  
+        # 转发配置 :  
+        # 通过使用上面定义的 upstream my_servers 来进行负载均衡  
+        # 且指定flask程序的根目录  
+        # 且指定flask程序根目录下的入口脚本的名称（不包含后缀名）  
+
+        # redirect server error pages to the static page /50x.html  
+        error_page   500 502 503 504  /50x.html;  
+        location = /50x.html {  
+            root   html;  
+        }  
+    }  
+}  
+</code></pre>
+</div>
+
+<h3 id="section">四.　启动方式</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>uwsgi --ini path/uwsgi8081.ini  
+    启动8081结点（以非root用户的身份来启动）  
+
+uwsgi --ini path/uwsgi8082.ini  
+    启动8082结点（以非root用户的身份来启动）  
+
+uwsgi --ini path/uwsgi8083.ini  
+    启动8083结点（以非root用户的身份来启动）  
+
+uwsgi --ini path/uwsgi8084.ini  
+    启动8084结点（以非root用户的身份来启动）  
+
+cd /usr/local/nginx/sbin  
+    进入nginx的脚本目录  
+
+./nginx  
+    启动nginx（注意要以root用户身份来启动）  
+</code></pre>
+</div>
+
+<h3 id="section-1">五.　重启方式</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>uwsgi --reload path/uwsgi8081.pid  
+    重启8081结点（指定对应的pid文件，以非root身份）  
+
+uwsgi --reload path/uwsgi8082.pid  
+    重启8082结点（指定对应的pid文件，以非root身份）  
+
+uwsgi --reload path/uwsgi8083.pid  
+    重启8083结点（指定对应的pid文件，以非root身份）  
+
+uwsgi --reload path/uwsgi8084.pid  
+    重启8084结点（指定对应的pid文件，以非root身份）  
+
+cd /usr/local/nginx/sbin  
+    进入nginx的脚本目录  
+
+./nginx -s stop  
+    关闭nginx（注意要以root用户身份来关闭）  
+
+./nginx  
+    再次启动nginx（注意要以root用户身份来启动）  
+</code></pre>
+</div>
+
+      </article>
+      <hr>
+        <div class="bdsharebuttonbox">
+            <a href="#" class="bds_more" data-cmd="more"></a>
+            <a href="#" class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+            <a href="#" class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+            <a href="#" class="bds_douban" data-cmd="douban" title="分享到豆瓣网"></a>
+            <a href="#" class="bds_fbook" data-cmd="fbook" title="分享到Facebook"></a>
+            <a href="#" class="bds_copy" data-cmd="copy" title="分享到复制网址"></a>
+        </div>
+        <script>
+            window._bd_share_config={"common":{"bdSnsKey":{},"bdText":"","bdMini":"2","bdMiniList":false,"bdPic":"","bdStyle":"1","bdSize":"24"},"share":{}};with(document)0[(getElementsByTagName('head')[0]||body).appendChild(createElement('script')).src='http://bdimg.share.baidu.com/static/api/js/share.js?v=89860593.js?cdnversion='+~(-new Date()/36e5)];
+        </script>
+    </div>
+	
+    <!-- duoshuo.com javascript include code. -->    
+    
+    <!-- disqus.com javascript include code. -->
+	
+    <div class="post-area post comment">
+        <div id="disqus_thread"></div>
+    </div>
+	<script>
+		var disqus_config = function () {
+			this.page.url = "http://340StarObserver.github.io/2016/09/09/Nginx-Proxy/"; 
+			this.page.identifier = "/2016/09/09/Nginx-Proxy"; 
+		};
+		(function() {
+			var d = document, s = d.createElement('script');
+			s.src = '/static/js/embed.js';
+			s.setAttribute('data-timestamp', +new Date());
+			(d.head || d.body).appendChild(s);
+		})();
+	</script>
+	
+    
+  </div>
+  
+  <div id="content" class="col-sm-3">
+    <!-- <div id="myAffix" class="shadow-bottom-center hidden-xs" data-spy="affix" data-offset-top="0" data-offset-bottom="-20"> -->
+    <div id="myAffix" class="shadow-bottom-center hidden-xs" >
+      <div class="categories-list-header">
+        Content
+      </div>
+      <div class="content-text"></div>
+    </div>
+  </div>
+  
+</div>
+    </div>
+
+    
+    <div id="top" data-toggle="tooltip" data-placement="left" title="back to top">
+      <a href="javascript:;">
+        <div class="arrow"></div>
+        <div class="stick"></div>
+      </a>
+    </div>
+
+    <footer class="">
+  <div class="container">
+    <div class="row">
+      <div class="col-md-12">
+        <a href="mailto:lvyang@ippclub.org"><span class="glyphicon glyphicon-envelope"></span> lvyang@ippclub.org</a>
+        <span class="point"> · </span>
+        
+          <a href="https://github.com/340StarObserver">
+            <span class="icon">
+              <svg viewBox="0 0 16 16">
+                <path fill="#aaa" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+              </svg>
+            </span>
+            Github
+            <!-- <span>340StarObserver</span> -->
+          </a>
+          
+          <span class="point"> · </span>
+          <span><a href="https://github.com/340StarObserver/340StarObserver.github.io/_posts/Linux/2016-09-08-Nginx-Proxy.md">View source</a></span>
+          <span class="point"> · </span>
+          <span><a class="newpost" href="javascript:;">New post</a></span>
+		  <span class="point"> · </span>
+          <span><a href="/feed.xml">RSS</a></span>
+          <span class="point"> · </span>
+          <span>&copy; 2016 340号恒星观测员</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+    <script type="text/javascript">
+    function OnClickNewPost()
+    {
+        var title = prompt("Please enter title of your post");
+        if (title!=null){
+            title = title.replace(" ", "-");
+            var currentdate = new Date();
+            var urlNewPage = "https://github.com/340StarObserver/340StarObserver.github.io/?filename=_posts/" 
+                + currentdate.getFullYear() + "-" + (currentdate.getMonth()+1) + "-" + currentdate.getDate() + "-" + title + ".md";
+                
+            var defaultText =  [
+                '---',
+                'layout: post',
+                'comments: true',
+                'categories: diary',
+                '---',
+                '## Title',
+                'text'
+                ].join('\n');
+            urlNewPage += "&value=" + encodeURIComponent(defaultText);
+            window.open(urlNewPage);
+        }
+    }
+    
+    $(function() {
+      // CreateNewPostLinks
+      $('.newpost').each(function(){
+          $(this).click(OnClickNewPost);
+      });
+    });
+</script>
+  
+  </body>
+</html>

@@ -5,10 +5,10 @@
 	<meta charset="utf-8">
 	<meta http-equiv="X-UA-Compatible" content="IE=edge">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>About</title>
-	<meta name="description" content="some technical blogs">
+	<title>mysql存储过程</title>
+	<meta name="description" content="我把做App时候的一个存储过程（邀请注册）记录下来，以便之后不用再花时间研究它的格式了">
 	
-	<link rel="canonical" href="http://localhost:4000/about/">
+	<link rel="canonical" href="http://localhost:4000/2016/11/10/Mysql-Procedure/">
 	<link rel="alternate" type="application/rss+xml" title="Principality Of 340号恒星观测员" href="http://localhost:4000/feed.xml" />
 	
 	<!-- <link rel="stylesheet" href="/css/main.css"> -->
@@ -70,8 +70,8 @@
         
           
             
-              <li class="active">
-              
+              <li>
+            
             <a href="/about/"><span class="glyphicon "></span> About</a></li>
           
         
@@ -90,22 +90,80 @@
       <div class="row">
   <div id="myArticle" class="col-sm-9">
     <div class="post-area post">
+      <header>
+        <h1>mysql存储过程</h1>
+        <p>Nov 10, 2016</p>
+      </header>
+      <hr>
       <article>
-        <p><img src="http://localhost:4000/static/img/about.png" alt="about" /></p>
+        <p>我把做App时候的一个存储过程（邀请注册）记录下来，以便之后不用再花时间研究它的格式了</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    /*  
+        procedure for regedit a new account  
+        parameters  
+        {  
+        	usr        : the username you want to use  
+        	pwd        : the password you want to use,and it is encoded to char(32) by md5  
+        	registtime : the time when regedit  
+        	invitor    : the username of person that he invited you to regedit a new account  
+        	authcode   : the necessary code for regedit that you get from your invitor  
+        	res        : 0 authcode is wrong;1 username has been used by others;2 transaction error;3 succeed  
+        }  
+        to make our deepnote environment good,we hope that our users are good readers,so we use invite regedit method  
+        that is to say,if you want to regedit successfully,  
+        A. you should get a right authcode or called invitecode  
+        B. your username has not been used by others  
+    */  
+    
+    drop procedure if exists regedit;  
+    delimiter //  
+    create procedure regedit (in usr varchar(16),in pwd char(32),in registtime int(11),in invitor varchar(16),in authcode char(32),out res tinyint(1))  
+    begin  
+        declare lastid int;  
+        declare t_error int default 0;  
+        declare continue handler for sqlexception set t_error=1;  
+        
+        start transaction;  
+    	set res=0;  
+    	if exists(select 1 from usertable where username=invitor and inviteauth=1 and invitecode=authcode limit 1)  
+    	then  
+    		if exists(select 1 from usertable where username=usr limit 1)  
+    		then  
+    			set res=1;  
+    		else  
+    			insert into usertable (username,password,birthtime) values(usr,pwd,registtime);  
+    			set lastid=LAST_INSERT_ID();  
+    			insert into classifytable (userid) values(lastid);  
+    			set res=3;  
+    		end if;  
+    	end if;  
+    	
+    	if t_error=0 then  
+            commit;  
+            set res=3;  
+        else  
+            rollback;  
+            set res=2;  
+        end if;  
+        
+    end //  
+    delimiter ;  
+</code></pre>
+</div>
 
       </article>
       <hr>
-     <div class="bdsharebuttonbox">
-        <a href="#" class="bds_more" data-cmd="more"></a>
-        <a href="#" class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
-        <a href="#" class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
-        <a href="#" class="bds_douban" data-cmd="douban" title="分享到豆瓣网"></a>
-        <a href="#" class="bds_fbook" data-cmd="fbook" title="分享到Facebook"></a>
-        <a href="#" class="bds_copy" data-cmd="copy" title="分享到复制网址"></a>
-    </div>
-    <script>
-        window._bd_share_config={"common":{"bdSnsKey":{},"bdText":"","bdMini":"2","bdMiniList":false,"bdPic":"","bdStyle":"1","bdSize":"24"},"share":{}};with(document)0[(getElementsByTagName('head')[0]||body).appendChild(createElement('script')).src='http://bdimg.share.baidu.com/static/api/js/share.js?v=89860593.js?cdnversion='+~(-new Date()/36e5)];
-    </script>
+        <div class="bdsharebuttonbox">
+            <a href="#" class="bds_more" data-cmd="more"></a>
+            <a href="#" class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+            <a href="#" class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+            <a href="#" class="bds_douban" data-cmd="douban" title="分享到豆瓣网"></a>
+            <a href="#" class="bds_fbook" data-cmd="fbook" title="分享到Facebook"></a>
+            <a href="#" class="bds_copy" data-cmd="copy" title="分享到复制网址"></a>
+        </div>
+        <script>
+            window._bd_share_config={"common":{"bdSnsKey":{},"bdText":"","bdMini":"2","bdMiniList":false,"bdPic":"","bdStyle":"1","bdSize":"24"},"share":{}};with(document)0[(getElementsByTagName('head')[0]||body).appendChild(createElement('script')).src='http://bdimg.share.baidu.com/static/api/js/share.js?v=89860593.js?cdnversion='+~(-new Date()/36e5)];
+        </script>
     </div>
 	
     <!-- duoshuo.com javascript include code. -->    
@@ -117,8 +175,8 @@
     </div>
 	<script>
 		var disqus_config = function () {
-			this.page.url = "http://340StarObserver.github.io/about/"; 
-			this.page.identifier = ""; 
+			this.page.url = "http://340StarObserver.github.io/2016/11/10/Mysql-Procedure/"; 
+			this.page.identifier = "/2016/11/10/Mysql-Procedure"; 
 		};
 		(function() {
 			var d = document, s = d.createElement('script');
@@ -130,6 +188,7 @@
 	
     
   </div>
+  
   <div id="content" class="col-sm-3">
     <!-- <div id="myAffix" class="shadow-bottom-center hidden-xs" data-spy="affix" data-offset-top="0" data-offset-bottom="-20"> -->
     <div id="myAffix" class="shadow-bottom-center hidden-xs" >
@@ -139,6 +198,7 @@
       <div class="content-text"></div>
     </div>
   </div>
+  
 </div>
     </div>
 
@@ -168,7 +228,7 @@
           </a>
           
           <span class="point"> · </span>
-          <span><a href="https://github.com/340StarObserver/340StarObserver.github.io/pages/2_about.md">View source</a></span>
+          <span><a href="https://github.com/340StarObserver/340StarObserver.github.io/_posts/Database/2016-11-10-Mysql-Procedure.md">View source</a></span>
           <span class="point"> · </span>
           <span><a class="newpost" href="javascript:;">New post</a></span>
 		  <span class="point"> · </span>

@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Redis-Cluster 分布式缓存 </title>
+	<meta name="description" content="本文讲述如何使用Redis的集群来对key-value的数据进行分布式的缓存。">
+	
+	<link rel="canonical" href="http://localhost:4000/2016/08/17/Redis-Cluster/">
+	<link rel="alternate" type="application/rss+xml" title="Principality Of 340号恒星观测员" href="http://localhost:4000/feed.xml" />
+	
+	<!-- <link rel="stylesheet" href="/css/main.css"> -->
+    
+    <link rel="stylesheet" type="text/css" href="/static/css/bootstrap.min.css">
+    <link rel="stylesheet" type="text/css" href="/static/css/index.css">
+	<script type="text/javascript" src="/static/js/jquery-1.11.1.min.js"></script>
+	<script type="text/javascript" src="/static/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="/static/css/monokai_sublime.min.css">
+	<script type="text/javascript" src="/static/js/highlight.min.js"></script>
+
+    <!--
+    <link rel="stylesheet" type="text/css" href="http://apps.bdimg.com/libs/bootstrap/3.3.0/css/bootstrap.min.css">
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/jquery/2.1.1/jquery.min.js"></script>
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/bootstrap/3.3.0/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="http://apps.bdimg.com/libs/highlight.js/8.4/styles/monokai_sublime.min.css">
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/highlight.js/8.4/highlight.min.js"></script>
+    -->
+    
+	<script type="text/javascript" src="/static/js/index.js"></script>
+	<script>hljs.initHighlightingOnLoad();</script>
+</head>
+
+ <!--  <body data-spy="scroll" data-target="#myAffix"> -->
+  <body>
+
+    <header>
+
+<!-- navbar -->
+  <nav class="navbar navbar-inverse">
+  <div class="container">
+    <!-- Brand and toggle get grouped for better mobile display -->
+    <div class="navbar-header">
+      <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#bs-example-navbar-collapse-1">
+        <span class="sr-only">Toggle navigation</span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+      </button>
+      <a class="navbar-brand" href="/">Principality Of 340号恒星观测员</a>
+      <p class="navbar-text"></p>
+    </div>
+    <!-- Collect the nav links, forms, and other content for toggling -->
+    <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
+      <ul class="nav navbar-nav navbar-right">
+
+        
+          <li>
+        
+        <a href="/">Home</a></li>
+
+        
+          
+            
+              <li>
+            
+            <a href="/projects/"><span class="glyphicon "></span> Projects</a></li>
+          
+        
+          
+            
+              <li>
+            
+            <a href="/about/"><span class="glyphicon "></span> About</a></li>
+          
+        
+          
+        
+          
+        
+      </ul>
+    </div><!-- /.navbar-collapse -->
+  </div><!-- /.container-fluid -->
+</nav>
+
+</header>
+
+    <div id="main" class="container main">
+      <div class="row">
+  <div id="myArticle" class="col-sm-9">
+    <div class="post-area post">
+      <header>
+        <h1>Redis-Cluster 分布式缓存 </h1>
+        <p>Aug 17, 2016</p>
+      </header>
+      <hr>
+      <article>
+        <p>本文讲述如何使用Redis的集群来对key-value的数据进行分布式的缓存。</p>
+
+<p>至于Redis的原理和集群的机制，本文不作论述，我也不太了解，本文专注于集群的部署和使用。</p>
+
+<p>因此，本文的重点在于Redis集群的详细配置文件，以及详细的部署过程。</p>
+
+<p>要点：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    1.　Redis的通用配置　与　结点个性配置  
+    
+    2.　部署缓存集群  
+    
+    3.　主结点扩展　与　从结点扩展  
+    
+    4.　主结点移除　与　从结点移除  
+    
+    5.　数据迁移均衡  
+</code></pre>
+</div>
+
+<h3 id="section">一.　版本架构</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    系统 : ubuntu15.10  
+
+    版本 : redis-3.0.7-64bits  
+
+    架构 : 三个主结点  
+
+        ( 因为我是用作分布式缓存，所以没必要设置用来备份的从结点 )  
+        ( 实际环境下不同主结点要部署在不同机子上 )  
+        主结点A : 127.0.0.1:7001  
+        主结点B : 127.0.0.1:7002  
+    主结点C : 127.0.0.1:7003  
+</code></pre>
+</div>
+
+<h3 id="commonconf">二.　所有结点的公共配置文件 common.conf</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    daemonize yes  
+
+            以后台方式运行  
+
+    tcp-backlog 511  
+
+            每个结点tcp最大连接数  
+
+    timeout 0  
+
+            客户端连接超时时间(秒)，该段时间内客户端没有发出任何命令，则关闭该连接  
+            0表示禁用此项设置  
+
+    tcp-keepalive 60  
+
+            定期向客户端发送心跳探测(秒)  
+
+    loglevel notice  
+    
+    databases 2  
+
+            数据库的数量，默认数据库编号0，可用select命令在连接时指定库id  
+            强烈推荐使用时用不同的库存放不同类的信息  
+
+    stop-writes-on-bgsave-error yes  
+
+            持久化出错时，停止写操作  
+
+    rdbcompression yes  
+    
+    rdbchecksum yes  
+    
+    slave-serve-stale-data yes  
+    
+    slave-read-only yes  
+
+            从结点只能处理读请求  
+
+    repl-diskless-sync no  
+    
+    repl-diskless-sync-delay 5  
+    
+    repl-disable-tcp-nodelay yes  
+    
+    slave-priority 100  
+    
+    slowlog-log-slower-than 10000  
+
+            超过10ms的命令将被记录慢日志  
+
+    slowlog-max-len 128  
+    
+    latency-monitor-threshold 0  
+    
+    notify-keyspace-events ""  
+
+    save 900 1  
+
+            每隔900s，存在1个key被修改，发起快照保存  
+
+    save 300 100  
+
+            每隔300s，存在100个key被修改，发起快照保存  
+
+    save 60 10000  
+
+            每隔60s，存在10000个key被修改，发起快照保存  
+
+    appendonly no  
+
+            禁用aof持久化  
+            这里我是把集群用作分布式缓存，所以禁用了aof持久化  
+            如果你需要持久化，那么设置appendonly yes  
+
+    appendfsync everysec  
+    
+    no-appendfsync-on-rewrite yes  
+    
+    auto-aof-rewrite-min-size 64mb  
+    
+    lua-time-limit 5000  
+    
+    aof-rewrite-incremental-fsync yes  
+    
+    hash-max-ziplist-entries 512  
+    
+    hash-max-ziplist-value 64  
+    
+    list-max-ziplist-entries 512  
+    
+    list-max-ziplist-value 64  
+    
+    set-max-intset-entries 512  
+    
+    zset-max-ziplist-entries 128  
+    
+    zset-max-ziplist-value 64  
+    
+    hll-sparse-max-bytes 3000  
+    
+    activerehashing yes  
+    
+    client-output-buffer-limit normal 0 0 0  
+    
+    client-output-buffer-limit slave 256mb 64mb 60  
+    
+    client-output-buffer-limit pubsub 32mb 8mb 60  
+    
+    hz 10  
+    
+    cluster-enabled yes  
+
+            启用集群  
+
+    cluster-node-timeout 15000  
+
+            集群结点间超时(微秒)  
+
+    cluster-migration-barrier 2  
+
+            当一个主结点拥有至少2个从结点时，能够把自己的1个从结点让给没有从结点的主结点  
+
+    cluster-require-full-coverage yes  
+    
+    cluster-slave-validity-factor 10  
+</code></pre>
+</div>
+
+<h3 id="a-master7001conf">三. 主结点A的配置文件 master7001.conf</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    include /home/seven/program/redis/conf/common.conf  
+    
+            引入结点公共配置  
+    
+    port 7001  
+    
+            此结点的端口  
+    
+    pidfile /home/seven/program/redis/pid/master7001.pid  
+    
+            此结点的pid进程文件(推荐绝对路径)  
+    
+    logfile /home/seven/program/redis/log/master7001.log  
+    
+            此结点的日志文件(推荐绝对路径)  
+    
+    cluster-config-file /home/seven/program/redis/auto/master7001.conf  
+    
+            此结点启动后生成的配置信息(不同于本身的配置文件，它是自动生成的)  
+    
+    dir /home/seven/program/redis/data/  
+    
+            此结点的数据文件目录(推荐绝对路径)  
+    
+    appendfilename master7001.aof  
+    
+            此结点的aof型持久化文件  
+            (只需文件名，且完整路径是上面的dir加上这个，即/home/seven/program/redis/data/master7001.aof)  
+    
+    dbfilename master7001.rdb  
+    
+            此结点的rdb型持久化文件  
+            (只需文件名，且完整路径是上面的dir加上这个，即/home/seven/program/redis/data/master7001.rdb)  
+    
+    maxmemory 64mb  
+    
+            此结点的内存分配  
+    
+    maxmemory-policy allkeys-lru  
+    
+            此结点的所有键值对均采用LRU置换算法  
+    
+    auto-aof-rewrite-percentage 80-100  
+</code></pre>
+</div>
+
+<h3 id="bc-master7002conf-master7003conf">四. 主结点B,C的配置文件 master7002.conf master7003.conf</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    主结点B,C的配置文件，与A的配置只是端口和路径变了  
+</code></pre>
+</div>
+
+<h3 id="ruby">五. 安装 ruby</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    sudo apt-get update  
+    
+    sudo apt-get install ruby  
+    
+    ruby -v  
+</code></pre>
+</div>
+
+<h3 id="rubygems">六. 安装 rubygems</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    https://rubygems.org/pages/download  
+    
+            下载rubygems，然后解压，进入它的目录  
+    
+    ruby setup.rb  
+    
+            安装rubygems，此命令需要root或者管理员身份  
+    
+    sudo apt-get install gem  
+    
+            安装gem  
+    
+    vi /var/lib/locales/supported.d/local  
+    
+            如果gem安装失败，则修改这个文件，追加一行内容 zh_CN.UTF-8 UTF-8  
+    
+    sudo locale-gen  
+    
+            如果gem安装失败，则继续上一条命令后执行此命令  
+    
+    sudo dpkg-reconfigure locales  
+    
+            如果gem安装失败，则继续上一条命令后执行此命令  
+    
+    gem install redis  
+    
+            安装rubygems-reids，此命令需要root或者管理员身份  
+            然而发现报错，类似While executing gem ... (Gem::RemoteFetcher::FetchError)  
+            多半是由于GFW的问题，需要更换源的网址  
+    
+    gem source -r https://rubygems.org/  
+    
+            删除原来的源网址  
+    
+    gem source -a https://ruby.taobao.org/  
+    
+            增加新的源网址  
+    
+    gem source -l  
+    
+            列出当前所有的源网址  
+    
+    gem install redis  
+    
+            再次安装rubygems-redis，此命令需要root或者管理员身份，这次发现成功安装  
+</code></pre>
+</div>
+
+<h3 id="section-1">七. 启动脚本</h3>
+
+<p>init.sh　：　禁用hugepage。另外这个脚本要以root方式运行，所以权限最好设置为700，所属组设置为root:root</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    echo never &gt; /sys/kernel/mm/transparent_hugepage/enabled  
+    
+    echo never &gt; /sys/kernel/mm/transparent_hugepage/defrag  
+</code></pre>
+</div>
+
+<p>start.sh　：　各结点的启动脚本</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    redis-server /home/seven/program/redis/conf/master7001.conf  
+
+            指定配置文件，启动主结点A  
+
+    redis-server /home/seven/program/redis/conf/master7002.conf  
+
+            指定配置文件，启动主结点B  
+
+    redis-server /home/seven/program/redis/conf/master7003.conf  
+
+            指定配置文件，启动主结点C  
+</code></pre>
+</div>
+
+<p>clusterset.sh　：　初始化集群的脚本</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    cd /home/seven/Downloads/redis/src  
+
+            进入你的redis的src目录，即redis-trib.rb这个脚本的位置  
+
+    ./redis-trib.rb create --replicas 0 127.0.0.1:7001 127.0.0.1:7002 127.0.0.1:7003  
+
+            配置集群的信息  
+            其中，replicas后面跟的0表示每个主结点有0个从结点，即此时没有从结点  
+            再后面的三个字符串表示三个主结点的地址和端口  
+            
+            另外，如果你有备份的需求（一般当需要持久化的时候），比如你的每个主结点需要有一个从结点，加入有三个从结点，  
+            它们的地址也是本地，端口分别是8001,8002,8003，那么修改后的命令是这样的  
+            
+            ./redis-trib.rb create --replicas 1  
+                127.0.0.1:7001 127.0.0.1:7002 127.0.0.1:7003  
+                127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003  
+                
+                // 其中 --replicas 1 表示每个主结点有一个从结点，且之后写完主结点列表后依次把各主结点的从结点写上  
+</code></pre>
+</div>
+
+<h3 id="section-2">八. 启动集群</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    su root  
+    
+            进入root身份，以便执行init.sh来禁用hugepage  
+    
+    ./init.sh  
+    
+            禁用hugepage，此脚本必须以root身份执行  
+    
+    exit  
+    
+            退出root身份，以便以非root身份来启动redis集群  
+    
+    ./start.sh  
+    
+            启动redis的各个结点  
+    
+    ./clusterset.sh  
+    
+            初始化集群配置  
+            第二次启动集群的时候，是不需要执行这个脚本的，就算执行也会报错的，除非你把之前的数据删光了  
+    
+    cd /home/seven/Downloads/redis/src  
+    
+            进入你的redis的src目录，即redis-trib.rb这个脚本的位置  
+    
+    ./redis-trib.rb check 127.0.0.1:7001  
+    
+            通过主结点A来查看集群  
+    
+    ./redis-trib.rb check 127.0.0.1:7002  
+    
+            通过主结点B来查看集群  
+    
+    ./redis-trib.rb check 127.0.0.1:7003  
+    
+            通过主结点C来查看集群  
+</code></pre>
+</div>
+
+<h3 id="section-3">九. 检验集群</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    redis-cli -c -h 127.0.0.1 -p 7001  
+    
+            连接本地的7001端口的redis结点  
+            注意，一定要加 -c 参数，这样才是以集群方式登入  
+    
+    set name shangyang  
+    
+            通过本地7001端口的redis结点，设置一个键值对  
+    
+    get name  
+    
+            通过本地7001端口的redis结点，获取name的值  
+    
+    quit  
+    
+            退出redis-cli  
+    
+    redis-cli -c -h 127.0.0.1 -p 7002  
+    
+            连接本地的7002端口的redis结点  
+    
+    get name  
+    
+            通过本地7002端口的redis结点，获取name的值  
+    
+    set name yingquliang  
+    
+            通过本地7002端口的redis结点，设置name的值  
+    
+    quit  
+    
+            退出redis-cli  
+</code></pre>
+</div>
+
+<h3 id="section-4">十. 增加主结点</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    "edit a new configure file"  
+    
+            编辑一个新的配置文件，例如 master7004.conf  
+    
+    redis-server /yourpath/master7004.conf  
+    
+            启动这个新的主结点  
+    
+    cd /home/seven/Downloads/redis/src  
+    
+            进入你的redis-trib.rb文件的目录  
+    
+    ./redis-trib.rb add-node 127.0.0.1:7004 127.0.0.1:7001  
+    
+            加入这个新的空结点到集群  
+            第一个参数是这个新结点的ip:port  
+            第二个参数是原来集群中任意一个结点的ip:port  
+    
+    ./redis-trib.rb reshard 127.0.0.1:7004  
+    
+            为这个新的空结点分配槽  
+            ( 整个集群中主结点的总槽数是16384，尽量每个主结点的槽数差不多 )  
+            如果不给新结点分配槽，该结点就无法存储数据  
+            ( 新的集群有4个主结点，平均每个主结点16384/4=4096槽，新结点从原来的3个结点中每个拿过来4096/3=1365槽 )  
+        
+            接下来根据提示，选择: 要迁移的槽数量 + 要迁移到哪个结点上 + 从哪个结点上迁移  
+            假设原来有N个结点，建议执行N次reshard命令，每次只从一个单独的结点上迁移过来16384/(N+1)/N个槽  
+        
+            这个命令一般用来进行在线的数据均衡  
+</code></pre>
+</div>
+
+<h3 id="section-5">十一. 增加从结点</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    "edit a new configure file"  
+    
+            编辑一个新的配置文件，例如 slave8001.conf  
+    
+    redis-server /yourpath/slave8001.conf  
+    
+            启动这个新的从结点  
+    
+    cd /home/seven/Downloads/redis/src  
+    
+            进入你的redis-trib.rb文件的目录  
+    
+    ./redis-trib.rb add-node 127.0.0.1:8001 127.0.0.1:7001  
+    
+            加入这个新的空结点到集群  
+            第一个参数是这个新结点的ip:port  
+            第二个参数是原来集群中任意一个结点的ip:port  
+    
+    redis-cli -c -h 127.0.0.1 -p 8001  
+    
+            进入这个8001结点的shell  
+            注意，要加 -c 参数，这样才是以集群方式登入  
+    
+    cluster replicate xxxxxxxxxxxxx  
+    
+            后面的参数表示这个从结点的主结点的id  
+            关于id，可以用./redis-trib.rb check ip:port 来查看  
+            在执行这条命令的时候，对应的主结点很可能无法提供服务，所以请在压力小的时候进行从结点的扩展  
+            另外，从结点是没有槽的，因为从结点只是用作备份  
+</code></pre>
+</div>
+
+<h3 id="section-6">十二. 删除从结点</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    cd /home/seven/Downloads/redis/src  
+
+            进入你的redis-trib.rb文件的目录  
+
+    ./redis-trib.rb del-node 127.0.0.1:8001 xxxxxxxxx  
+
+            删除从结点  
+            第一个参数是你要删除的从结点的ip:port  
+            第二个参数是那个从结点的id，关于id，可以用./redis-trib.rb check ip:port 来查看  
+
+    redis-cli -c -h 127.0.0.1 -p 8001 shutdown  
+
+            关闭这个结点  
+            既然它都从集群中移除了，再开着它也没用了，不如及早关闭它  
+</code></pre>
+</div>
+
+<h3 id="section-7">十三. 删除主结点</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    删除主结点之前，必须把该主结点的槽迁移到其他的主结点上  
+    以下便是迁移槽的步骤 :  
+    
+    ./redis-trib.rb reshard 127.0.0.1:7001  
+    
+            目标 : 把要删除的7004主结点上的部分槽迁移到7001主结点上  
+            假设目前7004结点上有x个槽，删除7004后如果剩下n个主结点，那么建议迁移x/n个槽到7001结点上  
+            同理迁移x/n个槽到7002,7003上  
+    
+    ./redis-trib.rb reshard 127.0.0.1:7002  
+    
+            目标 : 把要删除的7004主结点上的部分槽迁移到7002主结点上  
+    
+    ./redis-trib.rb reshard 127.0.0.1:7003  
+    
+            目标 : 把要删除的7004主结点上的部分槽迁移到7003主结点上  
+    
+    ./redis-trib.rb del-node 127.0.0.1:7004 xxxxxxxxx  
+    
+            删除空的主结点  
+            第一个参数是你要删除的主结点的ip:port  
+            第二个参数是那个主结点的id，关于id，可以用./redis-trib.rb check ip:port 来查看  
+
+    redis-cli -c -h 127.0.0.1 -p 7001 shutdown  
+
+            关闭这个结点  
+            既然它都从集群中移除了，再开着它也没用了，不如及早关闭它  
+    
+    ./redis-trib.rb check 127.0.0.1:7001  
+    
+            通过7001结点来检查集群  
+    
+    ./redis-trib.rb info 127.0.0.1:7001  
+    
+            通过7001结点来查看集群信息  
+</code></pre>
+</div>
+
+      </article>
+      <hr>
+        <div class="bdsharebuttonbox">
+            <a href="#" class="bds_more" data-cmd="more"></a>
+            <a href="#" class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+            <a href="#" class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+            <a href="#" class="bds_douban" data-cmd="douban" title="分享到豆瓣网"></a>
+            <a href="#" class="bds_fbook" data-cmd="fbook" title="分享到Facebook"></a>
+            <a href="#" class="bds_copy" data-cmd="copy" title="分享到复制网址"></a>
+        </div>
+        <script>
+            window._bd_share_config={"common":{"bdSnsKey":{},"bdText":"","bdMini":"2","bdMiniList":false,"bdPic":"","bdStyle":"1","bdSize":"24"},"share":{}};with(document)0[(getElementsByTagName('head')[0]||body).appendChild(createElement('script')).src='http://bdimg.share.baidu.com/static/api/js/share.js?v=89860593.js?cdnversion='+~(-new Date()/36e5)];
+        </script>
+    </div>
+	
+    <!-- duoshuo.com javascript include code. -->    
+    
+    <!-- disqus.com javascript include code. -->
+	
+    <div class="post-area post comment">
+        <div id="disqus_thread"></div>
+    </div>
+	<script>
+		var disqus_config = function () {
+			this.page.url = "http://340StarObserver.github.io/2016/08/17/Redis-Cluster/"; 
+			this.page.identifier = "/2016/08/17/Redis-Cluster"; 
+		};
+		(function() {
+			var d = document, s = d.createElement('script');
+			s.src = '/static/js/embed.js';
+			s.setAttribute('data-timestamp', +new Date());
+			(d.head || d.body).appendChild(s);
+		})();
+	</script>
+	
+    
+  </div>
+  
+  <div id="content" class="col-sm-3">
+    <!-- <div id="myAffix" class="shadow-bottom-center hidden-xs" data-spy="affix" data-offset-top="0" data-offset-bottom="-20"> -->
+    <div id="myAffix" class="shadow-bottom-center hidden-xs" >
+      <div class="categories-list-header">
+        Content
+      </div>
+      <div class="content-text"></div>
+    </div>
+  </div>
+  
+</div>
+    </div>
+
+    
+    <div id="top" data-toggle="tooltip" data-placement="left" title="back to top">
+      <a href="javascript:;">
+        <div class="arrow"></div>
+        <div class="stick"></div>
+      </a>
+    </div>
+
+    <footer class="">
+  <div class="container">
+    <div class="row">
+      <div class="col-md-12">
+        <a href="mailto:lvyang@ippclub.org"><span class="glyphicon glyphicon-envelope"></span> lvyang@ippclub.org</a>
+        <span class="point"> · </span>
+        
+          <a href="https://github.com/340StarObserver">
+            <span class="icon">
+              <svg viewBox="0 0 16 16">
+                <path fill="#aaa" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+              </svg>
+            </span>
+            Github
+            <!-- <span>340StarObserver</span> -->
+          </a>
+          
+          <span class="point"> · </span>
+          <span><a href="https://github.com/340StarObserver/340StarObserver.github.io/_posts/Database/2016-08-17-Redis-Cluster.md">View source</a></span>
+          <span class="point"> · </span>
+          <span><a class="newpost" href="javascript:;">New post</a></span>
+		  <span class="point"> · </span>
+          <span><a href="/feed.xml">RSS</a></span>
+          <span class="point"> · </span>
+          <span>&copy; 2016 340号恒星观测员</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+    <script type="text/javascript">
+    function OnClickNewPost()
+    {
+        var title = prompt("Please enter title of your post");
+        if (title!=null){
+            title = title.replace(" ", "-");
+            var currentdate = new Date();
+            var urlNewPage = "https://github.com/340StarObserver/340StarObserver.github.io/?filename=_posts/" 
+                + currentdate.getFullYear() + "-" + (currentdate.getMonth()+1) + "-" + currentdate.getDate() + "-" + title + ".md";
+                
+            var defaultText =  [
+                '---',
+                'layout: post',
+                'comments: true',
+                'categories: diary',
+                '---',
+                '## Title',
+                'text'
+                ].join('\n');
+            urlNewPage += "&value=" + encodeURIComponent(defaultText);
+            window.open(urlNewPage);
+        }
+    }
+    
+    $(function() {
+      // CreateNewPostLinks
+      $('.newpost').each(function(){
+          $(this).click(OnClickNewPost);
+      });
+    });
+</script>
+  
+  </body>
+</html>

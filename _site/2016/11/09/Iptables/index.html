@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>iptables</title>
+	<meta name="description" content="一. 总的命令格式">
+	
+	<link rel="canonical" href="http://localhost:4000/2016/11/09/Iptables/">
+	<link rel="alternate" type="application/rss+xml" title="Principality Of 340号恒星观测员" href="http://localhost:4000/feed.xml" />
+	
+	<!-- <link rel="stylesheet" href="/css/main.css"> -->
+    
+    <link rel="stylesheet" type="text/css" href="/static/css/bootstrap.min.css">
+    <link rel="stylesheet" type="text/css" href="/static/css/index.css">
+	<script type="text/javascript" src="/static/js/jquery-1.11.1.min.js"></script>
+	<script type="text/javascript" src="/static/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="/static/css/monokai_sublime.min.css">
+	<script type="text/javascript" src="/static/js/highlight.min.js"></script>
+
+    <!--
+    <link rel="stylesheet" type="text/css" href="http://apps.bdimg.com/libs/bootstrap/3.3.0/css/bootstrap.min.css">
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/jquery/2.1.1/jquery.min.js"></script>
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/bootstrap/3.3.0/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="http://apps.bdimg.com/libs/highlight.js/8.4/styles/monokai_sublime.min.css">
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/highlight.js/8.4/highlight.min.js"></script>
+    -->
+    
+	<script type="text/javascript" src="/static/js/index.js"></script>
+	<script>hljs.initHighlightingOnLoad();</script>
+</head>
+
+ <!--  <body data-spy="scroll" data-target="#myAffix"> -->
+  <body>
+
+    <header>
+
+<!-- navbar -->
+  <nav class="navbar navbar-inverse">
+  <div class="container">
+    <!-- Brand and toggle get grouped for better mobile display -->
+    <div class="navbar-header">
+      <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#bs-example-navbar-collapse-1">
+        <span class="sr-only">Toggle navigation</span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+      </button>
+      <a class="navbar-brand" href="/">Principality Of 340号恒星观测员</a>
+      <p class="navbar-text"></p>
+    </div>
+    <!-- Collect the nav links, forms, and other content for toggling -->
+    <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
+      <ul class="nav navbar-nav navbar-right">
+
+        
+          <li>
+        
+        <a href="/">Home</a></li>
+
+        
+          
+            
+              <li>
+            
+            <a href="/projects/"><span class="glyphicon "></span> Projects</a></li>
+          
+        
+          
+            
+              <li>
+            
+            <a href="/about/"><span class="glyphicon "></span> About</a></li>
+          
+        
+          
+        
+          
+        
+      </ul>
+    </div><!-- /.navbar-collapse -->
+  </div><!-- /.container-fluid -->
+</nav>
+
+</header>
+
+    <div id="main" class="container main">
+      <div class="row">
+  <div id="myArticle" class="col-sm-9">
+    <div class="post-area post">
+      <header>
+        <h1>iptables</h1>
+        <p>Nov 9, 2016</p>
+      </header>
+      <hr>
+      <article>
+        <h3 id="section">一. 总的命令格式</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>                    table        command          chain          parameters        action  
+
+    iptables        -t filter    -A(追加在表尾)     PREROUTING     -p tcp(协议)       -j ACCEPT  
+                       nat       -I(追加在表头)     POSTROUTING    -s ip(源ip)           DROP(丢弃且不响应)  
+                                 -D(删除一条)       INPUT          -d ip(宿ip)           REJECT(拒绝且会给客户端响应)  
+                                 -L(列举)          OUTPUT         --sport sp            DNAT(修改宿地址)  
+                                 -n               FORWARD        --dport dp            SNAT(修改源地址)  
+                                 -F(清空)                         -m  
+</code></pre>
+</div>
+
+<h3 id="iptables">二.　初次启用 iptables</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    systemctl stop firewalld  
+    systemctl mask firewalld  
+    
+        centos 默认使用的是firewall，因此需要先关闭它  
+    
+    yum install iptables-services  
+    
+        安装iptables service  
+    
+    systemctl enable iptables  
+    
+        开机启动iptables-service  
+    
+    systemctl start iptables  
+    
+        启动iptables  
+</code></pre>
+</div>
+
+<h3 id="etcsysconfigiptables">三. 我的 /etc/sysconfig/iptables</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    -A INPUT -i lo -j ACCEPT  
+        允许本地访问  
+
+    -A INPUT -p icmp -j ACCEPT  
+        允许所有的ICMP协议的报文（即允许被ping）  
+
+    -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT  
+        允许已经建立的连接进行回包  
+
+
+    
+    -A INPUT -p tcp --dport 35628 -j ACCEPT  
+        允许ssh（改了端口的ssh）被所有机器访问  
+        
+        
+
+    -A INPUT -p tcp -s 10.47.86.0/24 --dport 9200 -m limit --limit 10/m --limit-burst 100 -j ACCEPT   
+        允许 10.47.86.198/24 这个网段的机器访问这台机器的9200端口  
+        （并发控制）9200端口的最大连接数是100，超过的话就限制每分钟只能10个连接  
+        // 注意， -A 和 -I 都是追加一条规则，区别为 :  
+        // -A 是追加在原有规则表的最后  
+        // -I 是追加在原有规则表的开头  
+    
+    -A INPUT -p tcp --dport 9200 -j DROP  
+        没有满足上述的并发控制的话，访问9200端口的请求就直接丢弃  
+    
+    -A OUTPUT -p tcp --sport 9200 -j ACCEPT  
+        允许这台机器的9200端口，向任何机器返回数据  
+        
+        
+
+    -A INPUT -p tcp --dport 8081:8089 -j ACCEPT  
+        允许任何机器访问这台机器的8081~8089端口  
+        
+
+
+    -A INPUT -j REJECT  
+        拒绝所有额外的数据包（无论什么协议的）  
+        // 注意，必须是 -A，即在规则表的表尾；如果是 -I，则会导致所有应该接受的数据包也被拒绝掉  
+        // 注意，一般的配置思路是accept的在表头，拒绝的次之  
+</code></pre>
+</div>
+
+<h3 id="snat">四. SNAT转发</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    改写源地址（作用在PostRouting链上，即向外发出数据包的时候）  
+     
+    应用场景 ：  
+     
+        有一台HttpServer是A网段的，B网段的一台客户机想要访问A网段里的HttpSserver  
+        需要在A网段和B网段之间架设一台nat服务器，通过iptables配置nat转发  
+     
+    具体做法 :  
+     
+        1. nat服务器，修改 /etc/sysctl.conf  
+            添加 net.ipv4.ip_forward = 1  
+            然后执行 sysctl -p 命令来使之生效  
+            
+        2. nat服务器，修改 /etc/sysconfig/iptables  
+            添加 iptables -t nat -A POSTROUTING -p tcp -s B网段地址 -j SNAT --to A网段地址  
+            然后执行 service iptables restart  
+            
+        3. 一定要确保客户机的网关地址，是这台nat服务器的地址  
+            可以通过修改客户机的 /etc/sysconfig/network 来达到目的  
+            否则的话，如果客户机的请求不巧发给了别的一台网关，那台网关上没有配置nat转发，就访问不了HttpServer了  
+    
+    // 这样一来，客户机就可以直接访问HttpServer（直接的意思是输入的url不变，就是HttpServer的地址）  
+</code></pre>
+</div>
+
+<h3 id="dnat">五. DNAT转发</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    改写宿地址（作用在PreRouting链上，即接收数据包的时候）  
+    
+    应用场景  :  
+    
+        同上，还是B网段的客户机想要访问A网段上的http服务  
+        但是稍微做些改动，客户机不是直接去访问server的地址，而是去访问nat服务器的地址，nat服务器再做转发  
+        // 即，客户机访问nat服务器，但是实际上数据包被偷偷转发给了A网段的server  
+    
+    具体做法  :  
+    
+        1. nat服务器，修改 /etc/sysctl.conf  
+            添加 net.ipv4.ip_forward = 1  
+            然后执行 sysctl -p 命令来使之生效  
+            
+        2. nat服务器，修改 /etc/sysconfig/iptables  
+            添加 iptables -t nat -A PREROUTING -p tcp -d 与客户机相连的网卡地址 --dport 80 -j DNAT --to HttpServer地址:端口  
+            然后执行 service iptables restart  
+    
+    // 这样一来，客户机就可以间接访问HttpServer（间接的意思是客户机并不访问HttpServer的地址，而是使用nat的地址做url）  
+</code></pre>
+</div>
+
+      </article>
+      <hr>
+        <div class="bdsharebuttonbox">
+            <a href="#" class="bds_more" data-cmd="more"></a>
+            <a href="#" class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+            <a href="#" class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+            <a href="#" class="bds_douban" data-cmd="douban" title="分享到豆瓣网"></a>
+            <a href="#" class="bds_fbook" data-cmd="fbook" title="分享到Facebook"></a>
+            <a href="#" class="bds_copy" data-cmd="copy" title="分享到复制网址"></a>
+        </div>
+        <script>
+            window._bd_share_config={"common":{"bdSnsKey":{},"bdText":"","bdMini":"2","bdMiniList":false,"bdPic":"","bdStyle":"1","bdSize":"24"},"share":{}};with(document)0[(getElementsByTagName('head')[0]||body).appendChild(createElement('script')).src='http://bdimg.share.baidu.com/static/api/js/share.js?v=89860593.js?cdnversion='+~(-new Date()/36e5)];
+        </script>
+    </div>
+	
+    <!-- duoshuo.com javascript include code. -->    
+    
+    <!-- disqus.com javascript include code. -->
+	
+    <div class="post-area post comment">
+        <div id="disqus_thread"></div>
+    </div>
+	<script>
+		var disqus_config = function () {
+			this.page.url = "http://340StarObserver.github.io/2016/11/09/Iptables/"; 
+			this.page.identifier = "/2016/11/09/Iptables"; 
+		};
+		(function() {
+			var d = document, s = d.createElement('script');
+			s.src = '/static/js/embed.js';
+			s.setAttribute('data-timestamp', +new Date());
+			(d.head || d.body).appendChild(s);
+		})();
+	</script>
+	
+    
+  </div>
+  
+  <div id="content" class="col-sm-3">
+    <!-- <div id="myAffix" class="shadow-bottom-center hidden-xs" data-spy="affix" data-offset-top="0" data-offset-bottom="-20"> -->
+    <div id="myAffix" class="shadow-bottom-center hidden-xs" >
+      <div class="categories-list-header">
+        Content
+      </div>
+      <div class="content-text"></div>
+    </div>
+  </div>
+  
+</div>
+    </div>
+
+    
+    <div id="top" data-toggle="tooltip" data-placement="left" title="back to top">
+      <a href="javascript:;">
+        <div class="arrow"></div>
+        <div class="stick"></div>
+      </a>
+    </div>
+
+    <footer class="">
+  <div class="container">
+    <div class="row">
+      <div class="col-md-12">
+        <a href="mailto:lvyang@ippclub.org"><span class="glyphicon glyphicon-envelope"></span> lvyang@ippclub.org</a>
+        <span class="point"> · </span>
+        
+          <a href="https://github.com/340StarObserver">
+            <span class="icon">
+              <svg viewBox="0 0 16 16">
+                <path fill="#aaa" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+              </svg>
+            </span>
+            Github
+            <!-- <span>340StarObserver</span> -->
+          </a>
+          
+          <span class="point"> · </span>
+          <span><a href="https://github.com/340StarObserver/340StarObserver.github.io/_posts/Linux/2016-11-09-Iptables.md">View source</a></span>
+          <span class="point"> · </span>
+          <span><a class="newpost" href="javascript:;">New post</a></span>
+		  <span class="point"> · </span>
+          <span><a href="/feed.xml">RSS</a></span>
+          <span class="point"> · </span>
+          <span>&copy; 2016 340号恒星观测员</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+    <script type="text/javascript">
+    function OnClickNewPost()
+    {
+        var title = prompt("Please enter title of your post");
+        if (title!=null){
+            title = title.replace(" ", "-");
+            var currentdate = new Date();
+            var urlNewPage = "https://github.com/340StarObserver/340StarObserver.github.io/?filename=_posts/" 
+                + currentdate.getFullYear() + "-" + (currentdate.getMonth()+1) + "-" + currentdate.getDate() + "-" + title + ".md";
+                
+            var defaultText =  [
+                '---',
+                'layout: post',
+                'comments: true',
+                'categories: diary',
+                '---',
+                '## Title',
+                'text'
+                ].join('\n');
+            urlNewPage += "&value=" + encodeURIComponent(defaultText);
+            window.open(urlNewPage);
+        }
+    }
+    
+    $(function() {
+      // CreateNewPostLinks
+      $('.newpost').each(function(){
+          $(this).click(OnClickNewPost);
+      });
+    });
+</script>
+  
+  </body>
+</html>

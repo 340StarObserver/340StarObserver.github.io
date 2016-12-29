@@ -5,10 +5,10 @@
 	<meta charset="utf-8">
 	<meta http-equiv="X-UA-Compatible" content="IE=edge">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>About</title>
-	<meta name="description" content="some technical blogs">
+	<title>用 rsync 来做主机间的数据同步</title>
+	<meta name="description" content="rsync 数据同步">
 	
-	<link rel="canonical" href="http://localhost:4000/about/">
+	<link rel="canonical" href="http://localhost:4000/2016/10/23/Rsync/">
 	<link rel="alternate" type="application/rss+xml" title="Principality Of 340号恒星观测员" href="http://localhost:4000/feed.xml" />
 	
 	<!-- <link rel="stylesheet" href="/css/main.css"> -->
@@ -70,8 +70,8 @@
         
           
             
-              <li class="active">
-              
+              <li>
+            
             <a href="/about/"><span class="glyphicon "></span> About</a></li>
           
         
@@ -90,22 +90,197 @@
       <div class="row">
   <div id="myArticle" class="col-sm-9">
     <div class="post-area post">
+      <header>
+        <h1>用 rsync 来做主机间的数据同步</h1>
+        <p>Oct 23, 2016</p>
+      </header>
+      <hr>
       <article>
-        <p><img src="http://localhost:4000/static/img/about.png" alt="about" /></p>
+        <h3 id="rsync-">rsync 数据同步</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>rsync可以用来在服务器之间 同步数据 or 备份数据  
+
+一般linux上自动装了它，用了一下感觉很方便，记录一下以便日后再次用到  
+</code></pre>
+</div>
+
+<h3 id="rsync">一. 与rsync相关的目录结构</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>rsync这种级别的服务，推荐让root管理员来管理，当然它的相关配置也推荐放在/root目录下面  
+
+
+/root/rsyncd  
+
+    # rsync的根目录  
+
+
+/root/rsyncd/conf  
+
+    # rsync服务的配置目录  
+
+/root/rsyncd/conf/rsyncd.conf  
+
+    # rsync的主配置文件  
+
+/root/rsyncd/conf/rsyncd.secrets  
+
+    # rsync的认证配置  
+
+/root/rsyncd/conf/rsyncd.motd  
+
+    # rsync的用来提示用户的注释信息的配置  
+
+
+/root/rsyncd/restful  
+
+    # rsync服务的相关脚本目录  
+
+/root/rsyncd/restful/start.sh  
+
+    # rsync服务的启动脚本  
+</code></pre>
+</div>
+
+<h3 id="rsyncdconf">二. 主配置文件 rsyncd.conf</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>pid file = /mydata/rsyncd/rsyncd.pid  
+
+    # rsync的进程文件目录  
+
+motd file = /root/rsyncd/conf/rsyncd.motd  
+
+    # rsync的用来提示用户的注释信息的配置  
+
+log file = /mydata/rsyncd/rsyncd.log  
+
+    # rsync的日志文件路径  
+
+address = ******  
+
+    # 这台服务器的ip  
+    # 若仅在内部使用，请使用内网ip，否则使用公网ip  
+
+port = 873  
+
+    # 监听的端口  
+
+hosts allow = *  
+
+    # 允许的客户端的ip，*表示允许所有  
+
+max connections = 5  
+
+    # 最大连接数量  
+
+uid = root  
+
+gid = root  
+
+use chroot = yes  
+
+read only = yes  
+
+    # 只读  
+    # 若允许客户端上传同步数据，则可以设置 write only 或者 read write  
+
+transfer logging = yes  
+
+log format = %t %a %m %f %b  
+
+syslog facility = local3  
+
+timeout = 300  
+
+
+[linkA]  
+
+path = /mydata/rsyncd/test  
+
+auth users = root  
+
+list = yes  
+
+ignore errors  
+
+secrets file = /root/rsyncd/conf/rsyncd.secrets  
+
+    # 上面这段配置是 linkA，同一台rsync服务器上可以配置多个这种东西，每个的同步目录不同  
+    # path          表示linkA所指向的需要同步的目录  
+    # auth users    表示同步这个目录下的文件，需要用哪个用户来认证  
+    # list=yes      表示在用户登入后，可以看到这个目录下的文件列表；反之设置为no  
+    # secrets file  表示该目录所需要的认证配置信息的路径  
+    # 还可以配置 exclude = dir1/ dir2/，表示在这个目录下排除（不同步）这个两个子目录  
+</code></pre>
+</div>
+
+<h3 id="rsyncdsecrets">三. 认证配置文件 rsyncd.secrets</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>root:abc  
+
+    # 格式为 用户:密码  
+    # 注意，此处的用户需要是这台服务器上真实存在的用户  
+    # 注意，此处的密码可以不是这个用户的密码（即可以任意）  
+</code></pre>
+</div>
+
+<h3 id="rsyncdmotd">四. 提示信息配置文件 rsyncd.motd</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>welcome to sync server &gt;_&lt;  
+</code></pre>
+</div>
+
+<h3 id="startsh">五. 启动脚本 start.sh</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>rsync --daemon --config=/root/rsyncd/conf/rsyncd.conf  
+
+    # 以后台方式启动  
+    # 指定配置文件路径  
+</code></pre>
+</div>
+
+<h3 id="section">六. 客户端操作</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>rsync --port 873 --list-only  root@xx.xx.xx.xx::linkA  
+
+    # 列出服务器上linkA下面的资源  
+    # 注意，需要指定端口  
+    # 注意，这里的 root 指的是 linkA代表的目录所需要的认证用户  
+
+rsync -avzrP root@xx.xx.xx.xx::linkA mypath/  
+
+    # 把服务器上linkA下面的资源同步到本机的 mypath目录  
+    # 注意，此处不需要指定端口  
+    # 注意，此处的参数 -a 是 archive mode  
+    # 注意，此处的参数 -v 是 传输时的进度等信息  
+    # 注意，此处的参数 -z 是 压缩传输  
+    # 注意，此处的参数 -r 是 递归（递归同步linkA下面的子目录）  
+    # 注意，此处的参数 -P 是 传输进度  
+    # 注意，这里的 root 指的是 linkA代表的目录所需要的认证用户  
+
+rsync -avzrP --delete root@xx.xx.xx.xx::linkA mypath/  
+
+    # 注意，比较上面一条命令，多了参数 --delete  
+    # 它表示客户端的数据要与服务器上的完全一致  
+    # 即如果同步之前，你的客户端的mypath目录下存在服务器上没有的文件，则同步的时候会自动删除它们  
+    # 所以，使用这条命令的时候，请小心不要让你的客户端的同步目录下有其他重要数据  
+
+Tip : 建议把客户端的同步命令放入crontab里，定期自动同步or备份  
+</code></pre>
+</div>
 
       </article>
       <hr>
-     <div class="bdsharebuttonbox">
-        <a href="#" class="bds_more" data-cmd="more"></a>
-        <a href="#" class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
-        <a href="#" class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
-        <a href="#" class="bds_douban" data-cmd="douban" title="分享到豆瓣网"></a>
-        <a href="#" class="bds_fbook" data-cmd="fbook" title="分享到Facebook"></a>
-        <a href="#" class="bds_copy" data-cmd="copy" title="分享到复制网址"></a>
-    </div>
-    <script>
-        window._bd_share_config={"common":{"bdSnsKey":{},"bdText":"","bdMini":"2","bdMiniList":false,"bdPic":"","bdStyle":"1","bdSize":"24"},"share":{}};with(document)0[(getElementsByTagName('head')[0]||body).appendChild(createElement('script')).src='http://bdimg.share.baidu.com/static/api/js/share.js?v=89860593.js?cdnversion='+~(-new Date()/36e5)];
-    </script>
+        <div class="bdsharebuttonbox">
+            <a href="#" class="bds_more" data-cmd="more"></a>
+            <a href="#" class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+            <a href="#" class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+            <a href="#" class="bds_douban" data-cmd="douban" title="分享到豆瓣网"></a>
+            <a href="#" class="bds_fbook" data-cmd="fbook" title="分享到Facebook"></a>
+            <a href="#" class="bds_copy" data-cmd="copy" title="分享到复制网址"></a>
+        </div>
+        <script>
+            window._bd_share_config={"common":{"bdSnsKey":{},"bdText":"","bdMini":"2","bdMiniList":false,"bdPic":"","bdStyle":"1","bdSize":"24"},"share":{}};with(document)0[(getElementsByTagName('head')[0]||body).appendChild(createElement('script')).src='http://bdimg.share.baidu.com/static/api/js/share.js?v=89860593.js?cdnversion='+~(-new Date()/36e5)];
+        </script>
     </div>
 	
     <!-- duoshuo.com javascript include code. -->    
@@ -117,8 +292,8 @@
     </div>
 	<script>
 		var disqus_config = function () {
-			this.page.url = "http://340StarObserver.github.io/about/"; 
-			this.page.identifier = ""; 
+			this.page.url = "http://340StarObserver.github.io/2016/10/23/Rsync/"; 
+			this.page.identifier = "/2016/10/23/Rsync"; 
 		};
 		(function() {
 			var d = document, s = d.createElement('script');
@@ -130,6 +305,7 @@
 	
     
   </div>
+  
   <div id="content" class="col-sm-3">
     <!-- <div id="myAffix" class="shadow-bottom-center hidden-xs" data-spy="affix" data-offset-top="0" data-offset-bottom="-20"> -->
     <div id="myAffix" class="shadow-bottom-center hidden-xs" >
@@ -139,6 +315,7 @@
       <div class="content-text"></div>
     </div>
   </div>
+  
 </div>
     </div>
 
@@ -168,7 +345,7 @@
           </a>
           
           <span class="point"> · </span>
-          <span><a href="https://github.com/340StarObserver/340StarObserver.github.io/pages/2_about.md">View source</a></span>
+          <span><a href="https://github.com/340StarObserver/340StarObserver.github.io/_posts/Linux/2016-10-23-Rsync.md">View source</a></span>
           <span class="point"> · </span>
           <span><a class="newpost" href="javascript:;">New post</a></span>
 		  <span class="point"> · </span>

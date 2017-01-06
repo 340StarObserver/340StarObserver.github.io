@@ -5,7 +5,7 @@
 	<meta charset="utf-8">
 	<meta http-equiv="X-UA-Compatible" content="IE=edge">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>mysql存储过程</title>
+	<title>mysql存储过程 & 触发器</title>
 	<meta name="description" content="我把做App时候的一个存储过程（邀请注册）记录下来，以便之后不用再花时间研究它的格式了">
 	
 	<link rel="canonical" href="http://localhost:4000/2016/11/10/Mysql-Procedure/">
@@ -91,7 +91,7 @@
   <div id="myArticle" class="col-sm-9">
     <div class="post-area post">
       <header>
-        <h1>mysql存储过程</h1>
+        <h1>mysql存储过程 & 触发器</h1>
         <p>Nov 10, 2016</p>
       </header>
       <hr>
@@ -148,6 +148,26 @@
         
     end //  
     delimiter ;  
+</code></pre>
+</div>
+
+<p>尝试用触发器的时候，踩过一些坑，这里记录一下</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    drop trigger if exists check_sailors;
+    delimiter //
+    create trigger check_sailors after insert on Sailors for each row
+    begin
+    	if exists(select * from Sailors 
+    		where master is not NULL and master=NEW.master 
+    		group by master having count(*)&gt;2)
+    	then
+    		delete from Sailors where sid = NEW.sid limit 1;
+    	end if;
+    end //
+    delimiter ;
+    
+    -- mysql5.6 don't support {commit, start transaction, rollback} in trigger  
+    -- mysql5.6 don't support 'referencing NEW as N'  
 </code></pre>
 </div>
 

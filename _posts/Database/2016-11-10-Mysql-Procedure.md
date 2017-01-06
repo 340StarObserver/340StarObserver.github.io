@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "mysql存储过程"
+title:  "mysql存储过程 & 触发器"
 date:   2016-11-10 08:05:00
 categories: Database
 comments: true
@@ -59,3 +59,22 @@ comments: true
             
         end //  
         delimiter ;  
+
+
+尝试用触发器的时候，踩过一些坑，这里记录一下  
+
+        drop trigger if exists check_sailors;
+        delimiter //
+        create trigger check_sailors after insert on Sailors for each row
+        begin
+        	if exists(select * from Sailors 
+        		where master is not NULL and master=NEW.master 
+        		group by master having count(*)>2)
+        	then
+        		delete from Sailors where sid = NEW.sid limit 1;
+        	end if;
+        end //
+        delimiter ;
+        
+        -- mysql5.6 don't support {commit, start transaction, rollback} in trigger  
+        -- mysql5.6 don't support 'referencing NEW as N'  

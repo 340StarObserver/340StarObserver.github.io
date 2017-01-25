@@ -2,7 +2,7 @@
 layout: post
 title:  "mongo分片集群的部署以及集群认证"
 date:   2016-08-18 20:20:00
-categories: Database
+categories: Mongodb
 comments: true
 ---
 

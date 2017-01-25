@@ -2,7 +2,7 @@
 layout: post
 title:  "Elasticsearch 中文分词 & 安全配置"
 date:   2016-10-03 15:00:00
-categories: Database
+categories: Elasticsearch
 comments: true
 ---
 

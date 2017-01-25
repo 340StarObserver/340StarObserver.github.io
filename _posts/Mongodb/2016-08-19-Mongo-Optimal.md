@@ -2,7 +2,7 @@
 layout: post
 title:  "mongodb 性能提升的6个步骤"
 date:   2016-08-19 22:30:00
-categories: Database
+categories: Mongodb
 comments: true
 ---
 

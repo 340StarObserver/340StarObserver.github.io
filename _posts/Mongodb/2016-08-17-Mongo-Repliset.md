@@ -2,7 +2,7 @@
 layout: post
 title:  "mongo复制集的部署 & 复制集认证"
 date:   2016-08-17 11:13:00
-categories: Database
+categories: Mongodb
 comments: true
 ---
 

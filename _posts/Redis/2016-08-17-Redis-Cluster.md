@@ -2,7 +2,7 @@
 layout: post
 title:  "Redis-Cluster 分布式缓存 "
 date:   2016-08-17 09:34:00
-categories: Database
+categories: Redis
 comments: true
 ---
 

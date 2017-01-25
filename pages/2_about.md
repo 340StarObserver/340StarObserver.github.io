@@ -6,4 +6,4 @@ permalink: /about/
 ---
 
 
-![about]({{ site.url }}/static/img/about.png)
+![about]({{ site.url }}/static/img/about.jpg)

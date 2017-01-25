@@ -2,7 +2,7 @@
 layout: post
 title:  "基于日志点的Mysql主从复制"
 date:   2016-11-20 16:05:00
-categories: Database
+categories: Mysql
 comments: true
 ---
 

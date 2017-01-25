@@ -5,8 +5,8 @@
     <description>some technical blogs</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Fri, 06 Jan 2017 17:17:58 +0800</pubDate>
-    <lastBuildDate>Fri, 06 Jan 2017 17:17:58 +0800</lastBuildDate>
+    <pubDate>Wed, 25 Jan 2017 14:03:21 +0800</pubDate>
+    <lastBuildDate>Wed, 25 Jan 2017 14:03:21 +0800</lastBuildDate>
     <generator>Jekyll v3.3.1</generator>
     
       <item>
@@ -252,7 +252,7 @@
         <guid isPermaLink="true">http://localhost:4000/2016/11/25/Mongo-Monitor/</guid>
         
         
-        <category>Database</category>
+        <category>Mongodb</category>
         
       </item>
     
@@ -409,7 +409,7 @@
         <guid isPermaLink="true">http://localhost:4000/2016/11/21/Mysql-Repliset/</guid>
         
         
-        <category>Database</category>
+        <category>Mysql</category>
         
       </item>
     
@@ -686,7 +686,7 @@
         <guid isPermaLink="true">http://localhost:4000/2016/11/10/Mysql-Procedure/</guid>
         
         
-        <category>Database</category>
+        <category>Mysql</category>
         
       </item>
     
@@ -1232,7 +1232,7 @@ Tip : 建议把客户端的同步命令放入crontab里，定期自动同步or�
         <guid isPermaLink="true">http://localhost:4000/2016/10/03/Elasticsearch-IK/</guid>
         
         
-        <category>Database</category>
+        <category>Elasticsearch</category>
         
       </item>
     
@@ -1865,7 +1865,7 @@ cd /usr/local/nginx/sbin
         <guid isPermaLink="true">http://localhost:4000/2016/08/20/Mongo-Optimal/</guid>
         
         
-        <category>Database</category>
+        <category>Mongodb</category>
         
       </item>
     
@@ -2366,7 +2366,7 @@ cd /usr/local/nginx/sbin
         <guid isPermaLink="true">http://localhost:4000/2016/08/19/Mongo-Cluster/</guid>
         
         
-        <category>Database</category>
+        <category>Mongodb</category>
         
       </item>
     

@@ -2,7 +2,7 @@
 layout: post
 title:  "mysql存储过程 & 触发器"
 date:   2016-11-10 08:05:00
-categories: Database
+categories: Mysql
 comments: true
 ---
 

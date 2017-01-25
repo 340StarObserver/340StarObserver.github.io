@@ -2,7 +2,7 @@
 layout: post
 title:  "数据库片键 & 索引的一些思考"
 date:   2016-06-07 13:03:22
-categories: Database
+categories: Mongodb
 comments: true
 ---
 

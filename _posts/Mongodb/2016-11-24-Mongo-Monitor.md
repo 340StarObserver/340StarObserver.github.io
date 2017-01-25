@@ -2,7 +2,7 @@
 layout: post
 title:  "mongo监控命令与工具 "
 date:   2016-11-24 20:00:00
-categories: Database
+categories: Mongodb
 comments: true
 ---
 

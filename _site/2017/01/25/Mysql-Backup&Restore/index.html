@@ -101,6 +101,7 @@
 <div class="highlighter-rouge"><pre class="highlight"><code>    1. 逻辑备份 : 全备份 + 增量备份  
     2. 物理备份 : 直接把数据目录和日志目录全拷贝放到安全的地方  
     3. 恢复  
+    4. 自动化脚本  
 </code></pre>
 </div>
 
@@ -215,6 +216,8 @@
     
     &lt; 接下来，我们进行恢复 &gt;  
     
+    // 注意，执行恢复之前，强烈建议先关闭mysql  
+    
     首先，要清空mysql的数据目录( 保险起见，在清空前，把该目录压缩拷贝到安全的地方 )  
         // 注意，清空数据目录，意味着mysql自己的系统库(保存着用户信息和表信息之类)也会被删掉  
         // 注意，所以，我前面推荐不要单单备份某个库，而是全部一起备份  
@@ -243,15 +246,16 @@
 
 <h3 id="section">三.　将备份与恢复脚本化</h3>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>    // 选用方案二进行脚本化  
+<div class="highlighter-rouge"><pre class="highlight"><code>    // 选用方案二进行脚本化( 每天一个以当天日期为名的新目录，里面存放当天的一次全备和若干次增备 )  
 
 
     3-1. 全备脚本 backup_full.sh  
     
     #!/bin/sh
     
-    # suggest that only root can rwx this file
-
+    # do Full-Backup for mysql
+    # ( suggest that only root can rwx this file )
+    
     # here, define your conf
     mysql_conf_file=/etc/mysql/mysql.conf.d/mysqld.cnf
     backup_dir=/mydata/mysqlbackup
@@ -259,8 +263,9 @@
     port=3306
     user=root
     passwd=xxxxxx
+    export PATH=/usr/local/xtrabackup/bin:$PATH
     
-    # every day has a directory like '20170126'
+    # every day has a directory
     today_dir=${backup_dir}/$(date +%Y%m%d)
     if [ -d $today_dir ]; then
     	echo "$today_dir exists, it will be cleaned before full-backup"
@@ -268,20 +273,20 @@
     	echo "$today_dir clean success"
     fi
     
-    # do full-backup
-    export PATH=/usr/local/xtrabackup/bin:$PATH
+    # exec full-backup
     innobackupex \
-        --defaults-file=$mysql_conf_file \
-        --host=$host --port=$port \
-        --user=$user --password=$passwd $today_dir
+    	--defaults-file=$mysql_conf_file \
+    	--host=$host --port=$port \
+    	--user=$user --password=$passwd $today_dir
     echo "&gt;_&lt; successfully full-backup to $today_dir"
     
     
     3-2. 增备脚本 backup_increment.sh  
     
     #!/bin/sh
-
-    # suggest that only root can rwx this file
+    
+    # do Increment-Backup for mysql
+    # ( suggest that only root can rwx this file )
     
     # here, define your conf
     backup_dir=/mydata/mysqlbackup
@@ -289,12 +294,13 @@
     port=3306
     user=root
     passwd=xxxxxx
+    export PATH=/usr/local/xtrabackup/bin:$PATH
     
-    # find out the latest backup-dir, like 'backup_dir/20170126'
+    # recent_dir is like 'backup_dir/20170126'
     sub_dir=$(ls -lh $backup_dir | awk '{word=$9}END{print word}')
     recent_dir=${backup_dir}/$sub_dir
     
-    # find out the latest backup in $recent_dir, like 'backup_dir/20170126/2017-01-26_16-24-21'
+    # base_dir   is like 'backup_dir/20170126/2017-01-26_16-24-21'
     # 	if only exists 1 full-backup, use it
     # 	if exists 1 full-backup + n increment-backup, use the newest increment-backup
     sub_dir=$(ls -lh $recent_dir | awk '{word=$9}END{print word}')
@@ -306,27 +312,28 @@
     	exit
     fi
     
-    # do increment-backup
-    export PATH=/usr/local/xtrabackup/bin:$PATH
+    # exec increment-backup
     innobackupex \
-        --incremental-basedir=$base_dir \
-        --incremental $recent_dir \
-        --host=$host --port=$port \
-        --user=$user --password=$passwd
+    	--incremental-basedir=$base_dir \
+    	--incremental $recent_dir \
+    	--host=$host --port=$port \
+    	--user=$user --password=$passwd
     echo "&gt;_&lt; successfully incre-backup to $recent_dir"
     
     
-    3-3. 恢复脚本  
+    3-3. 恢复脚本 restore.sh  
     
     #!/bin/sh
-
-    # suggest that only root can rwx this file
+    
+    # do restore for mysql
+    # ( 1. suggest that only root can rwx this file )
+    # ( 2. stop mysql before restore )
     
     # here, define your conf
-    #     the 'mysql_before_restore_path' is to save a backup before restore
     mysql_data_dir=/var/lib/mysql
     mysql_before_restore_path=/mydata/mysqlbefore
     restore_buffer_size=64M
+    export PATH=/usr/local/xtrabackup/bin:$PATH
     
     # check parameters
     restore_dir=$1
@@ -342,7 +349,6 @@
     echo "\trestore_buffer_size  : $restore_buffer_size"
     echo "\trestore_dir          : $restore_dir"
     
-    export PATH=/usr/local/xtrabackup/bin:$PATH
     num=$(ls -lh $restore_dir | awk 'BEGIN{i=-1}{i+=1}END{print i}')
     base_dir=${restore_dir}/$(ls -lh $restore_dir | awk 'BEGIN{i=0}{if(i==1){a=$9} i+=1}END{print a}')
     i=0
@@ -370,7 +376,9 @@
     	i=$(($i+1))
     done
     
-    zip -r ${mysql_before_restore_path}/$(date +%Y%m%d).zip $mysql_data_dir
+    cd ${mysql_data_dir}/../
+    dirname=$(echo $mysql_data_dir | awk -F '/' '{print $4}')
+    zip -r ${mysql_before_restore_path}/$(date +%Y%m%d).zip $dirname
     rm -rf $mysql_data_dir/*
     
     innobackupex --apply-log --use-memory=$restore_buffer_size $base_dir

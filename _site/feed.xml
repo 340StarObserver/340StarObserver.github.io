@@ -5,8 +5,8 @@
     <description>some technical blogs</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Sat, 28 Jan 2017 15:56:14 +0800</pubDate>
-    <lastBuildDate>Sat, 28 Jan 2017 15:56:14 +0800</lastBuildDate>
+    <pubDate>Sun, 29 Jan 2017 22:11:22 +0800</pubDate>
+    <lastBuildDate>Sun, 29 Jan 2017 22:11:22 +0800</lastBuildDate>
     <generator>Jekyll v3.3.1</generator>
     
       <item>
@@ -561,30 +561,41 @@
     
       <item>
         <title>基于日志点的Mysql主从复制</title>
-        <description>&lt;p&gt;本篇讲述我学习mysql基于二进制日志的复制&lt;/p&gt;
+        <description>&lt;p&gt;本篇讲述我学习mysql基于二进制日志的复制，主要内容是 :&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    1. 方案一 : 基于 mysqldump    的主从  
+    2. 方案二 : 基于 innobackupex 的主从( 推荐 )  
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
 
 &lt;p&gt;我的环境是 :&lt;/p&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    主结点 : ipA:3306  
     从结点 : ipB:3306  
-    
     // iptables已配置，允许访问3306端口  
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;h3 id=&quot;section&quot;&gt;一. 在主结点上建立用来复制的用户&lt;/h3&gt;
+&lt;h3 id=&quot;mysqldump-&quot;&gt;一.　基于 mysqldump 的主从&lt;/h3&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    create user 'seven'@'%' identified by 'xxxxxx';  
+&lt;h4 id=&quot;section&quot;&gt;1-1. 在主结点上建立用来复制的用户&lt;/h4&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    // 首先，主结点的配置文件中以下几项要设置 :  
     
+    log_bin = /var/run/mysqld/bin.log
+    server-id = 10
+    
+    // 进入主结点，进行如下操作 :  
+
+    create user 'seven'@'%' identified by 'xxxxxx';  
         // 创建用户seven，并且是任何网段的（即slave可以是任何网段下的），用来作为复制的用户  
     
     grant replication slave on *.* to 'seven'@'%' identified by 'xxxxxx';  
-    
         // 为这个用户授权，可以复制任何库的任何表  
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;h3 id=&quot;section-1&quot;&gt;二. 备份主结点的数据&lt;/h3&gt;
+&lt;h4 id=&quot;section-1&quot;&gt;1-2. 备份主结点的数据&lt;/h4&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    mysqldump \  
         --single-transaction \  
@@ -592,7 +603,6 @@
         --triggers \  
         --routines \  
         university -h localhost -u root -p &amp;gt; university.sql  
-        
         // 导出university这个库  
         // 参数 --single-transaction 是用来保证事务完整性  
         // 参数 --master-data = 1    是表示在备份文件中不注销change-master命令  
@@ -601,7 +611,6 @@
         // 参数 --routines           是表示把存储过程也导出  
 
     more university.sql  
-    
         // 查看导出的备份文件，里面有一行 -- CHANGE MASTER TO MASTER_LOG_FILE='bin.000002', MASTER_LOG_POS=120;  
         // 其中的 --              表示是注释，对应了刚才的 --master-data = 2 这个参数  
         // 其中的 MASTER_LOG_FILE 表示日志文件，会在之后用到  
@@ -612,15 +621,22 @@
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;h3 id=&quot;section-2&quot;&gt;三.　在每个从结点上恢复数据&lt;/h3&gt;
+&lt;h4 id=&quot;section-2&quot;&gt;1-3.　在从结点上恢复数据&lt;/h4&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    mysql -h localhost -u root -p university &amp;lt; university.sql  
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    // 首先，从结点的配置文件中以下几项要配置 :  
     
+    skip_slave_start = 1    # manually use start slave to start the slave process
+    read_only        = 1    # this slave is read-only
+    server-id        = 20
+        // 注意，从结点上建议关闭 log_bin  
+        // 注意，每个结点的server-id是不同的  
+
+    mysql -h localhost -u root -p university &amp;lt; university.sql  
         // 注意，事先要创建好university这个库，然后才能导入  
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;h3 id=&quot;change-master&quot;&gt;四. change master（在每个从结点上操作）&lt;/h3&gt;
+&lt;h4 id=&quot;change-master&quot;&gt;1-4. 在从结点上 change master&lt;/h4&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    进入从结点的mysql  
     
@@ -630,7 +646,6 @@
         master_password = 'xxxxxx',  
         master_log_file = 'bin.000002',  
         master_log_pos = 120;  
-    
         // 参数 master_host     是主结点的地址  
         // 参数 master_user     是主结点上之前创建的用来复制的用户  
         // 参数 master_password 是主结点上之前创建的用来复制的用户的密码  
@@ -638,28 +653,9 @@
         // 参数 master_log_pos  是上面提到的备份文件中的那一行里的日志点  
     
     start slave;  
-        
         // 启动slave复制进程  
-        // 啊，提示报错　The server is not configured as slave; fix in config file or with CHANGE MASTER TO  
-        // 我的mysql版本是5.6，查资料说是5.7以后才能不需要改配置文件，没办法只好在配置文件里设置了  
-        
-        修改主结点的配置文件 :  
-            log_bin       = /var/run/mysqld/bin.log  
-            binlog_format = mixed   # 采用混合模式（state模式 &amp;amp; row模式 的混合）  
-            server-id     = 10  
-        
-        修改从结点的配置文件 :  
-            skip_slave_start = 1    # 启动从结点mysql的时候，不会自动启动复制进程，而是需要用start slave来手动启动  
-            read_only        = 1    # 这个从结点是只读的  
-            server-id        = 20   # 该值必须和主结点，以及其他从结点不同  
-            // 注意，从结点不需要再配置log_bin了，因为只需要主结点一份就够了  
-        
-        重启主结点和从结点的mysql  
-        
-        再次执行change master命令，以及start slave命令  
     
-    show slave status \G;  
-    
+    show slave status \G  
         // 查看slave进程的状态，若发现 :  
         // Slave_IO_Running : Yes  
         // Slave_SQL_Running: Yes  
@@ -667,7 +663,7 @@
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;h3 id=&quot;section-3&quot;&gt;五.　验证主从配置&lt;/h3&gt;
+&lt;h4 id=&quot;section-3&quot;&gt;1-5.　验证主从配置&lt;/h4&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    在主结点上插入几条数据  
     
@@ -675,41 +671,117 @@
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;h3 id=&quot;section-4&quot;&gt;六.　多线程复制（在每个从结点上操作）&lt;/h3&gt;
+&lt;hr /&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    注意 :  
-        I . mysql5.7之前就已经支持多线程复制，但是，5.7之前的版本，一个线程只能作用于一个库，  
-            当我只有一个库的时候，或者某个库的写操作占整体写操作的大比例的时候，多线程复制的效率反而不如单线程  
-        II. mysql5.7开始，多线程复制是一个线程作用于一个表  
+&lt;h3 id=&quot;innobackupex-&quot;&gt;二.　基于 innobackupex 的主从&lt;/h3&gt;
+
+&lt;h4 id=&quot;section-4&quot;&gt;2-1.　预准备 : 配置文件 + 主结点上创建用来复制的用户&lt;/h4&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    配置文件与基于mysqldump的主从是一样的  
     
-    show variables like 'slave_parallel%';  
+    主结点 :  
+    log_bin = /var/run/mysqld/bin.log
+    binlog_format = mixed
+    server-id = 10
     
-        // 查看该从结点上，有关多线程复制的参数  
-        // 可以看到有　         slave_parallel_workers　这个参数  
-        // 若是mysql5.7，还会有 slave_parallel_type　   这个参数  
-        // 其中，slave_parallel_type的默认值是'database'，可选值是'logical_clock'（即逻辑时钟的类型，该值相同的复制可以并发执行）  
+    从结点 :  
+    skip_slave_start = 1
+    read_only        = 1
+    server-id        = 20
+    // 注意，主结点的binlog建议是混合模式  
+    // 注意，主结点和所有的从结点，server-id一定不能相同  
+    // 注意，从结点建议是只读的  
     
-    stop slave;  
     
-        // 先停止该从结点上的slave服务  
+    在主结点上创建用来复制的用户，也是与基于mysqldump的主从是一样的  
     
-    set global slave_parallel_type='logical_clock';  
+    create user 'seven'@'%' identified by 'xxxxxx';  
+        // 创建用户seven，并且是任何网段的（即slave可以是任何网段下的），用来作为复制的用户  
     
-        // 修改多线程复制的方式为逻辑时钟方式  
+    grant replication slave on *.* to 'seven'@'%' identified by 'xxxxxx';  
+        // 为这个用户授权，可以复制任何库的任何表  
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;section-5&quot;&gt;2-2.　备份主结点的数据&lt;/h4&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    innobackupex \  
+        --defaults-file=/etc/my.cnf \  
+        --host=ipA --port=3306 \  
+        --user=root --password=xxxxxx /mydata/mysqlbackup  
+        
+        // 进行全备份  
+        // 备份到 /mydata/mysqlbackup 这个目录下，会产生一个以时间戳为名字的目录  
+        // 注意，强烈推荐像这样把所有库一起备份  
+        // 　　否则单单备份某个库，即mysql系统本身的一些库没有被备份的话  
+        // 　　之后恢复的时候，把数据目录一删，会导致恢复后无法读出数据的  
+
+
+    innobackupex \  
+        --defaults-file=/etc/my.cnf \  
+        --host=ipA --port=3306 \  
+        --user=root --password=xxxxxx \  
+        --apply-log /mydata/mysqlbackup/2017-01-29_21-03-48  
+        
+        // 用来保持事务的一致性  
+        // 此处的 /mydata/mysqlbackup/2017-01-29_21-03-48 便是刚才全备份的时候产出的目录  
+        // 　　需要把该目录拷贝到新的从结点上  
     
-    set global slave_parallel_workers=4;  
     
-        // 修改多线程复制的线程数为4（该值请根据CPU数量和能力来设置）  
+    下面是线上添加从结点的操作  
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;section-6&quot;&gt;2-3.　在从结点上恢复数据&lt;/h4&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    // 在mysql关闭的情况下，执行恢复数据的操作  
     
+    // 首先，需要清空datadir  
+    // ( 建议清空它之前，先压缩拷贝到安全的地方，万一之后的恢复操作失败，也不至于让mysql崩溃无法启动 )  
+    
+    // 然后 :  
+    innobackupex \  
+        --defaults-file=/etc/my.cnf \  
+        --host=ipB --port=3306 \  
+        --user=root --password=xxxxxx \  
+        --copy-back /mydata/mysqlbackup/2017-01-29_21-03-48  
+        
+    // 最后要把datadir中所有文件改成 mysql:mysql所属 :  
+    chown -R mysql:mysql /var/lib/mysql/*  
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;change-master-1&quot;&gt;2-4.　在从结点上 change master&lt;/h4&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    // 和基于mysqldump的主从是一样的  
+
+    more /mydata/mysqlbackup/2017-01-29_21-03-48/xtrabackup_binlog_info  
+        // 看一下这个目录中的 xtrabackup_binlog_info  
+        // 我这边的结果是 bin.000001	1984  
+        // 这两个数据会派用处  
+
+    启动从结点上的mysql，并进入它的shell  
+    
+    change master to master_host = 'ipA',  
+        master_port = 3306,  
+        master_user = 'seven',  
+        master_password = 'xxxxxx',  
+        master_log_file = 'bin.000001',  
+        master_log_pos = 1984;  
+
     start slave;  
+        // 启动slave复制进程  
     
-        // 再次启动该从结点上的slave服务    
+    show slave status \G  
+        // Slave_IO_Running : Yes  
+        // Slave_SQL_Running: Yes  
+        // 则成功  
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 </description>
-        <pubDate>Mon, 21 Nov 2016 00:05:00 +0800</pubDate>
-        <link>http://localhost:4000/2016/11/21/Mysql-Repliset/</link>
-        <guid isPermaLink="true">http://localhost:4000/2016/11/21/Mysql-Repliset/</guid>
+        <pubDate>Tue, 22 Nov 2016 03:13:00 +0800</pubDate>
+        <link>http://localhost:4000/2016/11/22/Mysql-Repliset/</link>
+        <guid isPermaLink="true">http://localhost:4000/2016/11/22/Mysql-Repliset/</guid>
         
         
         <category>Mysql</category>

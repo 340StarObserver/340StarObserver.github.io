@@ -5,8 +5,8 @@
     <description>some technical blogs</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Tue, 07 Feb 2017 21:12:58 +0800</pubDate>
-    <lastBuildDate>Tue, 07 Feb 2017 21:12:58 +0800</lastBuildDate>
+    <pubDate>Tue, 07 Feb 2017 21:19:23 +0800</pubDate>
+    <lastBuildDate>Tue, 07 Feb 2017 21:19:23 +0800</lastBuildDate>
     <generator>Jekyll v3.3.1</generator>
     
       <item>
@@ -1094,6 +1094,8 @@
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
+&lt;hr /&gt;
+
 &lt;p&gt;尝试用触发器的时候，踩过一些坑，这里记录一下&lt;/p&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    drop trigger if exists check_sailors;
@@ -1111,6 +1113,28 @@
     
     -- mysql5.6 don't support {commit, start transaction, rollback} in trigger  
     -- mysql5.6 don't support 'referencing NEW as N'  
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;hr /&gt;
+
+&lt;p&gt;对比一下 Postgresql 的存储过程，我写了一个转账的事务例子&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    create or replace function transfer(
+    	sender bigint, receiver bigint, amount numeric(20,2)
+    	) returns boolean AS $$
+    begin
+    	update customer set balance = balance - amount where id = sender;
+    	update customer set balance = balance + amount where id = receiver;
+    
+    	if exists(select 1 from customer where id = sender and balance &amp;lt; 0.00 limit 1) then
+    		rollback;
+    	end if;
+    
+    	return True;
+    	commit;
+    end;
+    $$ language plpgsql;
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 </description>

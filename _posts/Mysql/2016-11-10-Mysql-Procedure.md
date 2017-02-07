@@ -61,6 +61,9 @@ comments: true
         delimiter ;  
 
 
+--------------------
+
+
 尝试用触发器的时候，踩过一些坑，这里记录一下  
 
         drop trigger if exists check_sailors;
@@ -78,3 +81,25 @@ comments: true
         
         -- mysql5.6 don't support {commit, start transaction, rollback} in trigger  
         -- mysql5.6 don't support 'referencing NEW as N'  
+
+
+--------------------
+
+
+对比一下 Postgresql 的存储过程，我写了一个转账的事务例子
+
+        create or replace function transfer(
+        	sender bigint, receiver bigint, amount numeric(20,2)
+        	) returns boolean AS $$
+        begin
+        	update customer set balance = balance - amount where id = sender;
+        	update customer set balance = balance + amount where id = receiver;
+        
+        	if exists(select 1 from customer where id = sender and balance < 0.00 limit 1) then
+        		rollback;
+        	end if;
+        
+        	return True;
+        	commit;
+        end;
+        $$ language plpgsql;

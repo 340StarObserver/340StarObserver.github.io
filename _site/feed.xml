@@ -5,9 +5,104 @@
     <description>some technical blogs</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Fri, 10 Feb 2017 14:15:53 +0800</pubDate>
-    <lastBuildDate>Fri, 10 Feb 2017 14:15:53 +0800</lastBuildDate>
+    <pubDate>Fri, 10 Feb 2017 22:55:44 +0800</pubDate>
+    <lastBuildDate>Fri, 10 Feb 2017 22:55:44 +0800</lastBuildDate>
     <generator>Jekyll v3.3.1</generator>
+    
+      <item>
+        <title>全文搜索 -- 从 Elk 转到 Postgres</title>
+        <description>&lt;p&gt;自己做个APP玩，里面有个中文文章搜索的功能 :&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    a. 文章有标题，标签，引用，正文等字段
+    b. 根据用户输入的一些关键词，对不同字段给予不同的匹配权重，搜索出综合匹配度最高的若干篇文章
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;原先是用Elasticsearch，通过 ik中文分词插件 来做的，地址是 :&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    https://340starobserver.github.io/2016/10/03/Elasticsearch-IK/
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;然Elasticsearch的效率和稳定性不强，一直在寻找替代品
+偶然上个月参加”DbGeek南京站”的活动时，听见德哥给旁边一个DBA安利pg，发现它恰巧是我一直在寻找的宝具啊&lt;/p&gt;
+
+&lt;h3 id=&quot;scws--zhparser&quot;&gt;一.　插件 SCWS &amp;amp; zhparser&lt;/h3&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    scws 按照官网的来装就行，zhparser按照github上的来装就行
+    
+    装完以后 :
+    
+    psql -h 127.0.0.1 -p 5432 -d deepnote -U postgres
+    // 我这里的数据库名字叫 deepnote
+    // 注意，使用超级用户登入，否则下面创建extension会失败
+    
+    create extension zhparser;
+    create text search configuration chinese (parser = zhparser);
+    alter text search configuration chinese add mapping for n,v,a,i,e,l with simple;
+    // 创建了名为 chinese 的文本搜索配置
+    
+    select to_tsvector('chinese','年轻人还是要提高自己的姿势水平');
+    // 测试一下分词的效果
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;section&quot;&gt;二.　创建文章表&lt;/h3&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    create table note (
+        note_id uuid not null,
+        title   varchar(128) not null,
+        tags    varchar(64),
+        refs    text,
+        feel    text,
+        primary key(note_id)
+    );
+    // 创建一个文章表，为了说明问题，只设了编号+标题+标签+引用+正文这些字段
+    // 然后准备一些像样的数据弄进去
+    
+    
+    alter table note add column textunite tsvector;
+    update note set textunite = setweight(to_tsvector('chinese',title), 'A') ||
+        setweight(to_tsvector('chinese',tags) , 'B') ||
+        setweight(to_tsvector('chinese',refs) , 'D') ||
+        setweight(to_tsvector('chinese',feel) , 'C');
+    // 添加新的一列，并使用这个单独的一列来做文本搜索( 相比多列，单列查得更快一些 )
+    // 注意，这个新列 = 标题标签正文等字段的加权综合
+    
+    
+    create index note_textunite_idx on note using gin(textunite);
+    // 创建 gin索引，来加速全文搜索
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;section-1&quot;&gt;三.　查询测试&lt;/h3&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    select ts_rank_cd(textunite, query, 32) as score, title 
+        from note, to_tsquery('chinese','华夏文明|(商鞅 &amp;amp; 战国)') query 
+        where query @@ textunite 
+        order by score desc limit 3;
+    // 根据输入的一些关键词的组合，查出综合匹配度最高的前三篇文章
+    // 参数中的32表示最终得分 score = 原得分/(原得分+1)，即进行归一化        
+    // 其结果形如 :
+      score   |           title            
+    ----------+----------------------------
+     0.545455 | 失才亡魏
+     0.285714 | 卫鞅三说秦孝公
+     0.166667 | 振聋发聩的《谏逐客书》
+     0.119128 | 认知中国原生文明的基本理念
+
+    // 权值的分配有待研究
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+</description>
+        <pubDate>Fri, 10 Feb 2017 21:30:00 +0800</pubDate>
+        <link>http://localhost:4000/2017/02/10/pg-zhtextsearch/</link>
+        <guid isPermaLink="true">http://localhost:4000/2017/02/10/pg-zhtextsearch/</guid>
+        
+        
+        <category>Postgresql</category>
+        
+      </item>
     
       <item>
         <title>Mysql - 全备份 &amp; 增量备份 &amp; 恢复</title>
@@ -1944,390 +2039,6 @@ cd /usr/local/nginx/sbin
         
         
         <category>Linux</category>
-        
-      </item>
-    
-      <item>
-        <title>mongodb 性能提升的6个步骤</title>
-        <description>&lt;h3 id=&quot;section&quot;&gt;第一步. 做监测工作&lt;/h3&gt;
-
-&lt;p&gt;用 explain 来分析你的数据库操作语句&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        例如 db.your_collection.find({ x : 123, y : 456 }).explain(&quot;allPlansExecution&quot;)  
-        查看你的索引的工作情况 :  
-        比如实际用了哪个索引来查  
-        比如扫描了多少文档  
-        
-        explain 也常用来测试比较多个索引方案的优劣  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;使用慢日志（静态方法，通过在配置文件中添加配置项）&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        profile=1  
-
-                profile=0  表示不记录慢日志  
-                profile=1  表示只记录慢日志  
-                profile=2  表示所有日志都记录  
-
-        slowms=100  
-
-                慢日志的时间阀值是100ms  
-
-        可以通过 db.getProfilingStatus() 来查看慢日志的信息  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;使用慢日志（动态方法，通过mongo-shell命令）&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        db.setProfilingLevel( profile, slowms )  
-
-                第一个参数表示慢日志的级别，取值是 0 1 2  
-                第二个参数表示慢日志的时间阀值，单位是毫秒  
-
-                推荐通过这种动态的方式来设置慢日志  
-                因为，慢日志通常用在内测时候，真正上线后为了性能，是不会开启慢日志的，或者说是不会长期开着的  
-                一般是每隔一段时间，动态地开启一段时间来获取线上测试情况  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;查看服务状态&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        db.serverStatus()  
-
-                必须在admin库下，才能使用这条命令  
-                它会把最近15分钟内的监测情况全部打印出来  
-                举个例子，我只打印出部分信息，db.serverStatus()['extra_info']，结果是 :  
-                
-                {  
-                    &quot;note&quot;             : &quot;field vary by platform&quot;,  
-                    &quot;heap_usage_bytes&quot; : 62236488,  
-                    &quot;page_faults&quot;      : 24  
-                }  
-                
-                其中 heap_usage_bytes 表示最近15分钟内，内存中的热数据占用的字节数  
-                其中 page_faults      表示最近15分钟内，缺页中断的次数  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;使用mongostat工具&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        该脚本位于mongodb的安装目录的bin目录下  
-        举个例子 :  
-        
-        &amp;gt; mongostat \  
-        &amp;gt; --host your_host:your_port \  
-        &amp;gt; --username your_username_of_admin \  
-        &amp;gt; --password your_password_of_admin \  
-        &amp;gt; --authenticationDatabase admin  
-        
-        注意，authenticationDatabase这个参数必须是admin  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;使用mongo-shell自带的benchRun&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        举个例子 :  
-        res = benchRun({  
-            host        : '地址:端口',  
-            username    : 'admin库的用户名',  
-            password    : 'admin库的密码',  
-            db          : '你要测试的库名',  
-            ops         : [  
-                {  
-                    ns  : '你要测试的库名.集合名',  
-                    op  : 'insert',  
-                    doc : { 'x' : { '#RAND_INT' : [ 0, 999 ] } }  
-                }  
-            ],  
-            parallel    : 20,  
-            seconds     : 5  
-        })  
-        注意，benchRun需要在admin库下才能执行  
-        参数 parallel 是指我要用多少个线程（连接）去并发地插入，注意它并不是说每秒20个并发，因为每个线程每秒可以完成许多次插入  
-        参数 seconds  是指这个benchRun要执行多长时间  
-        
-        返回结果 :  
-        {  
-            &quot;note&quot;                       : &quot;values per second&quot;,  
-            &quot;errCount&quot;                   : NumberLong(0),  
-            &quot;trapped&quot;                    : &quot;error: not implemented&quot;,  
-            &quot;insertLatencyAverageMicros&quot; : 11.217961300363536,  
-            &quot;totalOps&quot;                   : NumberLong(344396),  
-            &quot;totalOps/s&quot;                 : 68697.5910483047,  
-            &quot;findOne&quot;                    : 0,  
-            &quot;insert&quot;                     : 68697.5910483047,  
-            &quot;delete&quot;                     : 0,  
-            &quot;update&quot;                     : 0,  
-            &quot;query&quot;                      : 0,  
-            &quot;command&quot;                    : 0  
-        }  
-        注意，上述结果中的数值都是每秒平均值  
-        例如insert=68697 是指每秒执行了这么多次插入  
-        例如errCount     是指每秒的平均错误数  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;使用 iostat命令 查看系统IO情况&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        举个例子 :  
-        iostat -x 1  
-            // 每秒输出一次  
-        
-        示例输出 :  
-        Linux 4.2.0-30-generic (localhost) 	2016年11月20日 	_x86_64_	(4 CPU)  
-        avg-cpu:  %user   %nice %system %iowait  %steal   %idle  
-                    6.37    0.01    1.74    0.92    0.00   90.96  
-        Device:         rrqm/s   wrqm/s     r/s     w/s    rkB/s    wkB/s avgrq-sz avgqu-sz   await r_await w_await  svctm  %util  
-        sda               0.10     1.17    1.98    1.31    42.79   119.86    98.73     0.08   24.54   16.75   36.27   4.66   1.54  
-            // 关注几个数据 :  
-            // %iowait  是指CPU等待IO的比例  
-            // %idle    是指CPU空闲的比例  
-            // %util    是指设备（上述结果中可以看到是sda这块硬盘）在这一秒内的IO带宽的使用百分比  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;section-1&quot;&gt;第二步. 优化文档的结构&lt;/h3&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        当面临性能问题的时候，首先考虑的是优化文档结构和优化索引，其次才是系统调优和硬件优化  
-        
-        在设计文档的结构的时候，一定要非常清除你需要解决的最重要的问题是什么  
-        mongodb并不是万能的许愿机，很多时候为了让你的最主要的业务流畅，你只能做出权衡  
-        下面提出两个原则 :  
-        
-        1. 文档结构并不取决于数据的内容，而是取决于数据的访问方式  
-                即，不要面向数据去设计数据库，而是面向应用去设计数据库  
-        2. 无计可施时，割肉全身，善用冗余来提高查询效率  
-        
-        
-        下面举两个案例  
-        两个案例均来自imooc上面的MongoDB2014北京大会，链接为 http://www.imooc.com/learn/255  
-    
-
-        案例一  
-
-        存储电商的产品，每个文档形如 :  
-        {  
-            _id     : 一个很长的字符串（全局唯一）,  
-            
-            china   : { 该产品的中文描述的具体的一些属性 },  
-            
-            english : { 该产品的英文描述的具体的一些属性 },  
-            
-            japan   : { 该产品的日文描述的具体的一些属性 },  
-            
-            ...还有其他十几个语系  
-        }  
-        原始的索引是 { _id : 1 }  
-        原始的查询语句是 db.products.find( { _id : xxx }, { china : 1 } )  
-        
-        比如这里是一个中国人来查询xxx这件商品的具体信息  
-        乍看之下这个设计确实没问题啊，为什么会很慢 ?  
-        
-        经过查日志发现，缺页中断太多，诶 ? 这关缺页中断什么事 ?  
-        原因如下 :  
-        1. 首先，mongodb在查询的时候，不管你有没有指定是否只返回某些字段，它都会把整个文档查出来放到内存中  
-        2. 只不过在mongodb客户端（mongo-shell或者应用程序）看来，它只拿其中的china字段（当然_id是必拿的）  
-        3. 所以，就算你只需要china字段，实际上内存中是存在着这个商品的全部信息  
-        4. 假设总共20个语系，即内存的使用率只有 5%  
-        5. 换句话说，内存原可以放20个商品，结果放了5个就满了，那当查询其余15个商品时，缺页中断率不高才怪  
-        
-        解决方案 :  
-        拆分文档，拆分后的结构形如 :  
-        {  
-            _id    : 原来的_id 连接上 语系,  
-            detail : { 该产品的在该语系下的详细描述 }  
-        }  
-        
-        索引不变，现在的查询语句变为 db.products.find({ _id : xxxchina })  
-        
-        这样一来，mongodb查出来的就是我要用的，内存使用率提高了20倍，缺页中断大大减少  
-
-
-
-        案例二  
-        
-        社交圈中的动态，涉及两种文档，一是用户文档，二是动态文档。简单表示如下 :  
-        用户文档 :  
-        {  
-            _id     : 用户id,  
-            friends : [ 朋友1的id, 朋友2的id, ... ]  
-        }  
-        用户文档的索引 { _id : 1 }  
-        动态文档 :  
-        {  
-            creator : 发布者的id,  
-            time    : 发布的时间戳,  
-            content : 动态的内容  
-        }  
-        动态文档的索引 { creator : 1, time : -1 }  
-        要查出我的所有朋友最近的几条动态，需要做联合查询，而且是带in的联合查询，慢是正常的  
-        
-        解决方案 :  
-        在每发布一条动态的时候，顺带加上当前我的所有朋友，修改后的动态文档的结构 :  
-        {  
-            creator : 发布者的id,  
-            time    : 发布的时间戳,  
-            friends : [ 此时的朋友1的id, 此时的朋友2的id, ... ],  
-            content : 动态的内容  
-        }  
-        另外为这个文档增加索引 { friends : 1, time : -1 }  
-        现在的查询语句就不是联合查询了，会快很多  
-        
-        但是这个解决方案很奇葩是么，搞这么大的冗余，多浪费磁盘啊，而且一致性的维护怎么做？  
-        但是，需要牢记的是，你的目标是啥？你需要解决的最大的问题是啥？  
-        如果你的应用，容忍一定程度的不一致性，比如社交圈这种，肯定是要优先照顾读的性能，通过冗余来提高读性能是很常见的  
-        
-        
-        
-        你可能会有疑问 ：  
-        案例一是因为要查的信息占整个文档的比例太小，所以内存利用率不高导致缺页中断频繁  
-        照这个道理，案例二中增加了很大的冗余信息，不是也会导致频繁的缺页中断吗，为什么案例二就可以用冗余呢  
-        此两者不是很矛盾吗？  
-        
-        我一开始也有这个疑惑，但是我要说的是，你会这么想，是不自觉地犯了根据数据内容来设计数据库的老病  
-        具体分析一下 :  
-        
-        案例一存储的是电商商品的信息，所有人都可能会去查询一些热门商品的信息  
-        也就是说，商品信息存在热数据，而且是被所有人都可能访问的热数据  
-        所以，在这种应用场景下，为了让热数据使用率更高，当然要提高内存利用率，即减少缺页中断的次数  
-        既然要提高内存的利用率，就要使得用户查的信息占整个文档的比例尽可能大  
-        这样一来，才能让固定的内存去装的下更多数量的文档  
-        所以，需要把一个商品的文档按照语系来切分成不同的文档  
-        这样一来，那些罕见语系的商品信息基本不会占用内存，内存中都是热门商品的常用语系的信息  
-        
-        案例二存储的是不同用户发表的动态信息  
-        第一，不同人的动态是不同的。第二，而且一般查的时候是翻页来查的  
-        这两个原因就决定了这种数据是不存在热数据的概念的  
-        所以，绝大多数情况，都是不可避免的缺页中断，都是去磁盘上查  
-        既然无法使用热数据，既然不可避免地查磁盘，那就只能让查磁盘更快这条路了  
-        所以，使用冗余是合适的  
-        
-        对比分析了这两个案例，以及你可能出现的疑惑，相信你有了更深刻的认识  
-        再次强调 :  
-        不要面向数据去设计数据库，而是要面向应用去设计数据库  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;section-2&quot;&gt;第三步. 优化索引&lt;/h3&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        和一般的sql索引很类似，不做太多阐述，这边我只提一个之前没有注意到的降序索引  
-        
-        例如消息文档 :  
-        {  
-            myid    : 我的id,  
-            
-            who     : 谁给我发的消息,  
-            
-            time    : 消息的时间戳,  
-            
-            content : 消息的内容  
-        }  
-        消息文档的索引 { myid : 1, time : -1 }  
-        
-        这样的索引，可以很快地找出与我相关的最近几条消息，实现按时间降序分页查询  
-        如果用{ myid : 1, time : 1 }索引的话 :  
-        还需要排序，我不知道mongodb内部会不会做什么优化，但是用降序索引肯定是确保效率的  
-        
-        另外，当你有多种索引方案备选时，建议通过explain来看看谁更好  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;section-3&quot;&gt;第四步. 优化内存&lt;/h3&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        首先，提两个概念  
-        
-        概念一. 内存映射  
-        
-                mongodb采用内存映射的方式来进行内存和磁盘上的数据调度  
-                其实内存映射是操作系统自带的，并不是mongodb自己实现的  
-                当你访问的数据在内存中的时候，mongodb能够很快地把数据拿给你  
-                当你访问的数据不在内存时，会触发缺页中断，告诉操作系统把xx号页面调入内存，然后再读内存  
-                
-                // 但是，高版本（&amp;gt;=3.0）的mongodb有了自己的存储引擎WiredTiger  
-        
-        概念二. 工作集  
-        
-                工作集 = 索引 + 内存中的热数据  
-                
-                如何查索引的大小？  
-                在mongo shell中，切换到你的某个库，通过 db.stats() 来查看  
-                其中的 indexSize 便是该库的所有索引占的字节数  
-                
-                如何查内存中的热数据的大小？  
-                在mongo shell中，切换到admin库，通过 db.serverStatus() 来查看  
-                该命令会返回最近15分钟内的运行情况  
-                如果只需要查热数据的大小，可以通过 db.serverStatus()['extra_info']，我的mongo版本是3.2.4  
-                其中的 heap_usage_bytes 便是内存中的热数据占的字节数  
-        
-        为了让mongodb尽量少的发生缺页中断，应该让内存大于工作集的大小  
-        这便是选用内存大小的根据  
-        
-        如果单机确实无法满足的话，就只能通过分片了  
-        因为很多时候工作集确实很大，甚至索引的大小就超过了实际数据的大小  
-        但是在分片的每台主机上，选用内存的依据还是工作集  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;io&quot;&gt;第五步. 优化IO&lt;/h3&gt;
-
-&lt;p&gt;对于不同的数据，采用不同的存储介质&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        数据文件用SSD来存储  
-
-                mongodb绝大多数情况下，都是随机读写  
-                相同情况下，SSD随机读写的效率是HDD的几十倍  
-
-        日志文件用HDD来存储  
-
-                对于顺序读写来说，SSD和HDD的效率相差不大  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;设置合理的预读值&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        什么是预读值？  
-        在请求磁盘上的数据的时候，操作系统并不是只返回一个页面，而是把接下来的好几个页面都调入内存中  
-        
-        而mongodb绝大多数是随机读写，如果预读值太大（默认是256），会导致缺页中断比较多  
-        此时就需要调小预读值，一般设置为32比较合适  
-        
-        例如 :  
-        通过 sudo blockdev --report 来查看系统各存储设备的预读值  
-        通过 sudo blockdev --setra 32 /dev/sda5 来设置/dev/sda5这个分区的预读值是32K  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;关闭数据库文件的atime&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        禁止系统对文件的访问时间更新会有效提高文件读取的性能  
-        
-        比如你的mongodb的数据在 /mydata 下面，文件系统是 ext4  
-        可以在 /etc/fstab 这个文件中添加一行 /dev/xvdb /mydata ext4 noatime 0 0  
-        修改完后，重新挂载 sudo mount -o remount /mydata  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;section-4&quot;&gt;第六步. 分片集群&lt;/h3&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        我专门写了一篇关于mongodb的分片片键的博客  
-        [地址是](https://340starobserver.github.io/2016/06/07/Mongo-ShardKey/)  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;section-5&quot;&gt;第七步. 其他建议&lt;/h3&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        1. 开启 releaseConnectionsAfterResponse 参数  
-            db.runCommand({ setParameter : 1, releaseConnectionsAfterResponse : true })  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-</description>
-        <pubDate>Sat, 20 Aug 2016 06:30:00 +0800</pubDate>
-        <link>http://localhost:4000/2016/08/20/Mongo-Optimal/</link>
-        <guid isPermaLink="true">http://localhost:4000/2016/08/20/Mongo-Optimal/</guid>
-        
-        
-        <category>Mongodb</category>
         
       </item>
     

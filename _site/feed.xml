@@ -5,8 +5,8 @@
     <description>some technical blogs</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Tue, 07 Feb 2017 21:19:23 +0800</pubDate>
-    <lastBuildDate>Tue, 07 Feb 2017 21:19:23 +0800</lastBuildDate>
+    <pubDate>Fri, 10 Feb 2017 14:15:53 +0800</pubDate>
+    <lastBuildDate>Fri, 10 Feb 2017 14:15:53 +0800</lastBuildDate>
     <generator>Jekyll v3.3.1</generator>
     
       <item>
@@ -1593,43 +1593,48 @@ Tip : 建议把客户端的同步命令放入crontab里，定期自动同步or�
 
 &lt;h3 id=&quot;elasticsearch&quot;&gt;四. 检验 elasticsearch&lt;/h3&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    a. 创建一个测试用的索引  
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    // 我把自己一个APP里面搜索文章的示例作为示范
+    // 它根据用户输入的一句话，来搜索最匹配的若干篇文章( 根据文章的标题，标签，正文等，给予不同的匹配权重 )
+
+    a. 创建一个测试用的索引  
     
-        curl -XPUT 127.0.0.1:9200/index  
+        curl -XPUT 127.0.0.1:9200/deepnote
     
     b. 创建一个mapping  
     
-        curl -XPOST 127.0.0.1:9200/index/fulltext/_mapping -d'  
-        {  
-            &quot;fulltext&quot; : {  
-                &quot;_all&quot; : {  
-                    &quot;analyzer&quot;        : &quot;ik_max_word&quot;,  
-                    &quot;search_analyzer&quot; : &quot;ik_max_word&quot;,  
-                    &quot;term_vector&quot;     : &quot;no&quot;,  
-                    &quot;store&quot;           : &quot;false&quot;  
-                },  
-                &quot;properties&quot; : {  
-                    &quot;content&quot; : {  
-                        &quot;type&quot;            : &quot;text&quot;,  
-                        &quot;analyzer&quot;        : &quot;ik_max_word&quot;,  
-                        &quot;search_analyzer&quot; : &quot;ik_max_word&quot;,  
-                        &quot;include_in_all&quot;  : &quot;true&quot;,  
-                        &quot;boost&quot;           : 8  
-                    }  
-                }  
-            }  
-        }'  
+        curl -XPOST 127.0.0.1:9200/deepnote/notes/_mapping -d'{
+            &quot;mappings&quot; : {
+                &quot;notes&quot; : {
+                    &quot;properties&quot; : {
+                        &quot;title&quot; : { &quot;type&quot; : &quot;string&quot;, &quot;analyzer&quot; : &quot;ik_smart&quot; },
+                        &quot;tags&quot;  : { &quot;type&quot; : &quot;string&quot;, &quot;analyzer&quot; : &quot;ik_smart&quot; },
+                        &quot;refer&quot; : { &quot;type&quot; : &quot;string&quot;, &quot;analyzer&quot; : &quot;ik_max_word&quot; },
+                        &quot;feel&quot;  : { &quot;type&quot; : &quot;string&quot;, &quot;analyzer&quot; : &quot;ik_max_word&quot; }
+                    }
+                }
+            }
+        }'
     
-    c. 创建一些文档  
+    c. 查询测试  
     
-        curl -XPOST 127.0.0.1:9200/index/fulltext/1 -d'{&quot;content&quot;:&quot;美国留给伊拉克的是个烂摊子吗&quot;}'  
-        curl -XPOST 127.0.0.1:9200/index/fulltext/2 -d'{&quot;content&quot;:&quot;公安部：各地校车将享最高路权&quot;}'  
-        curl -XPOST 127.0.0.1:9200/index/fulltext/3 -d'{&quot;content&quot;:&quot;中韩渔警冲突调查：韩警平均每天扣1艘中国渔船&quot;}'  
-        curl -XPOST 127.0.0.1:9200/index/fulltext/4 -d'{&quot;content&quot;:&quot;中国驻洛杉矶领事馆遭亚裔男子枪击 嫌犯已自首&quot;}'  
-    
-    d. 查询测试  
-    
-        curl -XPOST 127.0.0.1:9200/index/fulltext/_search -d '{&quot;query&quot; : { &quot;match&quot; : { &quot;content&quot; : &quot;中国&quot; }}}'  
+        curl -XPOST 127.0.0.1:9200/deepnote/notes/_search -d '{
+            &quot;size&quot; : 10,
+            &quot;sort&quot; : [ { &quot;_score&quot; : { &quot;order&quot; : &quot;desc&quot; } } ],
+            &quot;query&quot; : {
+                &quot;filtered&quot; : {
+                    &quot;query&quot; : {
+                        &quot;bool&quot; : {
+                            &quot;should&quot; : [
+                                { &quot;match&quot; : { &quot;title&quot; : { &quot;query&quot; : 此处填一句话, &quot;boost&quot; : 此处填整数权重 } } },
+                                { &quot;match&quot; : { &quot;tags&quot;  : { &quot;query&quot; : 此处填一句话, &quot;boost&quot; : 此处填整数权重 } } },
+                                { &quot;match&quot; : { &quot;refer&quot; : { &quot;query&quot; : 此处填一句话, &quot;boost&quot; : 此处填整数权重 } } },
+                                { &quot;match&quot; : { &quot;feel&quot;  : { &quot;query&quot; : 此处填一句话, &quot;boost&quot; : 此处填整数权重 } } }
+                            ]
+                        }
+                    }
+                }
+            }
+        }'
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 

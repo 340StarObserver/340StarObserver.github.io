@@ -216,43 +216,48 @@
 
 <h3 id="elasticsearch">四. 检验 elasticsearch</h3>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>    a. 创建一个测试用的索引  
+<div class="highlighter-rouge"><pre class="highlight"><code>    // 我把自己一个APP里面搜索文章的示例作为示范
+    // 它根据用户输入的一句话，来搜索最匹配的若干篇文章( 根据文章的标题，标签，正文等，给予不同的匹配权重 )
+
+    a. 创建一个测试用的索引  
     
-        curl -XPUT 127.0.0.1:9200/index  
+        curl -XPUT 127.0.0.1:9200/deepnote
     
     b. 创建一个mapping  
     
-        curl -XPOST 127.0.0.1:9200/index/fulltext/_mapping -d'  
-        {  
-            "fulltext" : {  
-                "_all" : {  
-                    "analyzer"        : "ik_max_word",  
-                    "search_analyzer" : "ik_max_word",  
-                    "term_vector"     : "no",  
-                    "store"           : "false"  
-                },  
-                "properties" : {  
-                    "content" : {  
-                        "type"            : "text",  
-                        "analyzer"        : "ik_max_word",  
-                        "search_analyzer" : "ik_max_word",  
-                        "include_in_all"  : "true",  
-                        "boost"           : 8  
-                    }  
-                }  
-            }  
-        }'  
+        curl -XPOST 127.0.0.1:9200/deepnote/notes/_mapping -d'{
+            "mappings" : {
+                "notes" : {
+                    "properties" : {
+                        "title" : { "type" : "string", "analyzer" : "ik_smart" },
+                        "tags"  : { "type" : "string", "analyzer" : "ik_smart" },
+                        "refer" : { "type" : "string", "analyzer" : "ik_max_word" },
+                        "feel"  : { "type" : "string", "analyzer" : "ik_max_word" }
+                    }
+                }
+            }
+        }'
     
-    c. 创建一些文档  
+    c. 查询测试  
     
-        curl -XPOST 127.0.0.1:9200/index/fulltext/1 -d'{"content":"美国留给伊拉克的是个烂摊子吗"}'  
-        curl -XPOST 127.0.0.1:9200/index/fulltext/2 -d'{"content":"公安部：各地校车将享最高路权"}'  
-        curl -XPOST 127.0.0.1:9200/index/fulltext/3 -d'{"content":"中韩渔警冲突调查：韩警平均每天扣1艘中国渔船"}'  
-        curl -XPOST 127.0.0.1:9200/index/fulltext/4 -d'{"content":"中国驻洛杉矶领事馆遭亚裔男子枪击 嫌犯已自首"}'  
-    
-    d. 查询测试  
-    
-        curl -XPOST 127.0.0.1:9200/index/fulltext/_search -d '{"query" : { "match" : { "content" : "中国" }}}'  
+        curl -XPOST 127.0.0.1:9200/deepnote/notes/_search -d '{
+            "size" : 10,
+            "sort" : [ { "_score" : { "order" : "desc" } } ],
+            "query" : {
+                "filtered" : {
+                    "query" : {
+                        "bool" : {
+                            "should" : [
+                                { "match" : { "title" : { "query" : 此处填一句话, "boost" : 此处填整数权重 } } },
+                                { "match" : { "tags"  : { "query" : 此处填一句话, "boost" : 此处填整数权重 } } },
+                                { "match" : { "refer" : { "query" : 此处填一句话, "boost" : 此处填整数权重 } } },
+                                { "match" : { "feel"  : { "query" : 此处填一句话, "boost" : 此处填整数权重 } } }
+                            ]
+                        }
+                    }
+                }
+            }
+        }'
 </code></pre>
 </div>
 

@@ -5,9 +5,117 @@
     <description>some technical blogs</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Fri, 10 Feb 2017 22:55:44 +0800</pubDate>
-    <lastBuildDate>Fri, 10 Feb 2017 22:55:44 +0800</lastBuildDate>
+    <pubDate>Wed, 15 Feb 2017 19:28:05 +0800</pubDate>
+    <lastBuildDate>Wed, 15 Feb 2017 19:28:05 +0800</lastBuildDate>
     <generator>Jekyll v3.3.1</generator>
+    
+      <item>
+        <title>Postgres -- 全备 &amp; 增备</title>
+        <description>&lt;p&gt;本篇的主要内容 :&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    1. 方案一 : 基于 转储 的备份和恢复
+    2. 方案二 : 基于 WAL 的备份和恢复
+    3. 备份和恢复的脚本
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;section&quot;&gt;方案一.　基于转储的备份和恢复&lt;/h3&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    A. script for backup ( sql_backup.sh )
+    
+    // 该脚本备份某个库
+    // 　　结果放入以当天日期为名的目录中
+    // 　　并把结果文件按256M拆分，接着每个文件单独压缩(因打包压缩会超出最大文件限制)
+    // 用法 : ./sql_backup.sh dbname
+    
+        #!/bin/sh
+        
+        # accept parameters
+        dbname=$1
+        if [ ${#dbname} -eq 0 ]; then
+        	echo &quot;You must choose a database to backup&quot;
+        	echo &quot;Eg : ./sql_backup.sh dbname&quot;
+        	exit
+        fi
+        
+        BackupDir=/mydata/pgbackup
+        
+        # environment variables
+        export PGUSER=postgres
+        export PGPASSWORD='xxxxxx'
+        export PGHOST=127.0.0.1
+        export PGPORT=5432
+        
+        # dump
+        CurDate=$(date +%Y%m%d)
+        mkdir $BackupDir/$CurDate
+        pg_dump -Fc $dbname | split -b 256M - $BackupDir/$CurDate/
+        
+        # compress each file separately
+        cd $BackupDir/$CurDate
+        ls -lh | while read line
+        do
+        	file=$(echo $line | awk '{word=$9}END{print word}')
+        	if [ ${#file} -gt 0 ]; then
+        		zip $file.zip $file
+        		rm $file
+        	fi
+        done
+        
+        echo &quot;successfully backup to $BackupDir/$CurDate&quot;
+    
+    
+    B. script for restore ( sql_restore.sh )
+    
+    // 该脚本恢复某个库
+    // 用法 : ./sql_restore.sh 某次备份的结果目录 新库名
+    // 例如 : ./sql_restore.sh /mydata/pgbackup/20170215
+    
+        #!/bin/sh
+        
+        # accept parameters
+        restore_dir=$1
+        new_dbname=$2
+        if [ ${#restore_dir} -eq 0 ] || [ ${#new_dbname} -eq 0 ]; then
+        	echo &quot;!-- lack of parameters&quot;
+        	echo &quot;Eg : ./sql_restore.sh /mydata/pgbackup/20170215 newdb&quot;
+        	exit
+        fi
+        
+        # environment variables
+        export PGUSER=postgres
+        export PGPASSWORD='xxxxxx'
+        export PGHOST=127.0.0.1
+        export PGPORT=5432
+        
+        # uncompress each file separately
+        cd $restore_dir
+        ls -lh | while read line
+        do
+        	file=$(echo $line | awk '{word=$9}END{print word}')
+        	if [ ${#file} -gt 0 ]; then
+        		unzip $file
+        		rm $file
+        	fi
+        done
+        
+        # restore
+        createdb $new_dbname
+        cat * | pg_restore -d $new_dbname
+        psql -d $new_dbname -c 'analyze'
+        
+        echo &quot;successfully restore from $restore_dir to $new_dbname&quot;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+</description>
+        <pubDate>Tue, 14 Feb 2017 01:51:00 +0800</pubDate>
+        <link>http://localhost:4000/2017/02/14/pg-backup/</link>
+        <guid isPermaLink="true">http://localhost:4000/2017/02/14/pg-backup/</guid>
+        
+        
+        <category>Postgresql</category>
+        
+      </item>
     
       <item>
         <title>全文搜索 -- 从 Elk 转到 Postgres</title>
@@ -24,8 +132,9 @@
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;p&gt;然Elasticsearch的效率和稳定性不强，一直在寻找替代品
-偶然上个月参加”DbGeek南京站”的活动时，听见德哥给旁边一个DBA安利pg，发现它恰巧是我一直在寻找的宝具啊&lt;/p&gt;
+&lt;p&gt;然Elasticsearch的效率和稳定性不强，一直在寻找替代品.&lt;/p&gt;
+
+&lt;p&gt;偶然上个月参加”DbGeek南京站”的活动时，听见德哥给旁边一个DBA安利pg，发现它恰巧是我一直在寻找的宝具啊&lt;/p&gt;
 
 &lt;h3 id=&quot;scws--zhparser&quot;&gt;一.　插件 SCWS &amp;amp; zhparser&lt;/h3&gt;
 
@@ -68,6 +177,7 @@
         setweight(to_tsvector('chinese',feel) , 'C');
     // 添加新的一列，并使用这个单独的一列来做文本搜索( 相比多列，单列查得更快一些 )
     // 注意，这个新列 = 标题标签正文等字段的加权综合
+    // 注意，权重只有ABCD四种值，且 A &amp;gt; B &amp;gt; C &amp;gt; D
     
     
     create index note_textunite_idx on note using gin(textunite);
@@ -260,141 +370,148 @@
 
 
     3-1. 全备脚本 backup_full.sh  
+    // 该脚本会以当天日期建一个新目录，并把产生的全备目录放入该日期目录中
+    // 用法 : ./backup_full.sh
     
-    #!/bin/sh
-    
-    # do Full-Backup for mysql
-    # ( suggest that only root can rwx this file )
-    
-    # here, define your conf
-    mysql_conf_file=/etc/mysql/mysql.conf.d/mysqld.cnf
-    backup_dir=/mydata/mysqlbackup
-    host=127.0.0.1
-    port=3306
-    user=root
-    passwd=xxxxxx
-    export PATH=/usr/local/xtrabackup/bin:$PATH
-    
-    # every day has a directory
-    today_dir=${backup_dir}/$(date +%Y%m%d)
-    if [ -d $today_dir ]; then
-    	echo &quot;$today_dir exists, it will be cleaned before full-backup&quot;
-    	rm -rf ${today_dir}/*
-    	echo &quot;$today_dir clean success&quot;
-    fi
-    
-    # exec full-backup
-    innobackupex \
-    	--defaults-file=$mysql_conf_file \
-    	--host=$host --port=$port \
-    	--user=$user --password=$passwd $today_dir
-    echo &quot;&amp;gt;_&amp;lt; successfully full-backup to $today_dir&quot;
+        #!/bin/sh
+        
+        # do Full-Backup for mysql
+        # ( suggest that only root can rwx this file )
+        
+        # here, define your conf
+        mysql_conf_file=/etc/mysql/mysql.conf.d/mysqld.cnf
+        backup_dir=/mydata/mysqlbackup
+        host=127.0.0.1
+        port=3306
+        user=root
+        passwd=xxxxxx
+        export PATH=/usr/local/xtrabackup/bin:$PATH
+        
+        # every day has a directory
+        today_dir=${backup_dir}/$(date +%Y%m%d)
+        if [ -d $today_dir ]; then
+        	echo &quot;$today_dir exists, it will be cleaned before full-backup&quot;
+        	rm -rf ${today_dir}/*
+        	echo &quot;$today_dir clean success&quot;
+        fi
+        
+        # exec full-backup
+        innobackupex \
+        	--defaults-file=$mysql_conf_file \
+        	--host=$host --port=$port \
+        	--user=$user --password=$passwd $today_dir
+        echo &quot;&amp;gt;_&amp;lt; successfully full-backup to $today_dir&quot;
     
     
     3-2. 增备脚本 backup_increment.sh  
+    // 该脚本会自动在备份目录下，寻找文件名最大(即日期距今最近)的那个目录
+    // 然后在那个目录下找到最近的一次备份，在那基础上做一次增备
+    // 用法 : ./backup_increment.sh
     
-    #!/bin/sh
-    
-    # do Increment-Backup for mysql
-    # ( suggest that only root can rwx this file )
-    
-    # here, define your conf
-    backup_dir=/mydata/mysqlbackup
-    host=127.0.0.1
-    port=3306
-    user=root
-    passwd=xxxxxx
-    export PATH=/usr/local/xtrabackup/bin:$PATH
-    
-    # recent_dir is like 'backup_dir/20170126'
-    sub_dir=$(ls -lh $backup_dir | awk '{word=$9}END{print word}')
-    recent_dir=${backup_dir}/$sub_dir
-    
-    # base_dir   is like 'backup_dir/20170126/2017-01-26_16-24-21'
-    # 	if only exists 1 full-backup, use it
-    # 	if exists 1 full-backup + n increment-backup, use the newest increment-backup
-    sub_dir=$(ls -lh $recent_dir | awk '{word=$9}END{print word}')
-    base_dir=${recent_dir}/$sub_dir
-    
-    # check whether already exists full-backup
-    if [ ${#sub_dir} -eq 0 ]; then
-    	echo &quot;!-- please do full-backup before incre-backup&quot;
-    	exit
-    fi
-    
-    # exec increment-backup
-    innobackupex \
-    	--incremental-basedir=$base_dir \
-    	--incremental $recent_dir \
-    	--host=$host --port=$port \
-    	--user=$user --password=$passwd
-    echo &quot;&amp;gt;_&amp;lt; successfully incre-backup to $recent_dir&quot;
+        #!/bin/sh
+        
+        # do Increment-Backup for mysql
+        # ( suggest that only root can rwx this file )
+        
+        # here, define your conf
+        backup_dir=/mydata/mysqlbackup
+        host=127.0.0.1
+        port=3306
+        user=root
+        passwd=xxxxxx
+        export PATH=/usr/local/xtrabackup/bin:$PATH
+        
+        # recent_dir is like 'backup_dir/20170126'
+        sub_dir=$(ls -lh $backup_dir | awk '{word=$9}END{print word}')
+        recent_dir=${backup_dir}/$sub_dir
+        
+        # base_dir   is like 'backup_dir/20170126/2017-01-26_16-24-21'
+        # 	if only exists 1 full-backup, use it
+        # 	if exists 1 full-backup + n increment-backup, use the newest increment-backup
+        sub_dir=$(ls -lh $recent_dir | awk '{word=$9}END{print word}')
+        base_dir=${recent_dir}/$sub_dir
+        
+        # check whether already exists full-backup
+        if [ ${#sub_dir} -eq 0 ]; then
+        	echo &quot;!-- please do full-backup before incre-backup&quot;
+        	exit
+        fi
+        
+        # exec increment-backup
+        innobackupex \
+        	--incremental-basedir=$base_dir \
+        	--incremental $recent_dir \
+        	--host=$host --port=$port \
+        	--user=$user --password=$passwd
+        echo &quot;&amp;gt;_&amp;lt; successfully incre-backup to $recent_dir&quot;
     
     
     3-3. 恢复脚本 restore.sh  
+    // 该脚本根据用户给定的日期目录，把那个目录中的首次全备和之后的若干次增备，整合起来，然后恢复
+    // 用法 : ./restore.sh /mydata/mysqlbackup/20170215
     
-    #!/bin/sh
-    
-    # do restore for mysql
-    # ( 1. suggest that only root can rwx this file )
-    # ( 2. stop mysql before restore )
-    
-    # here, define your conf
-    mysql_data_dir=/var/lib/mysql
-    mysql_before_restore_path=/mydata/mysqlbefore
-    restore_buffer_size=64M
-    export PATH=/usr/local/xtrabackup/bin:$PATH
-    
-    # check parameters
-    restore_dir=$1
-    if [ ${#restore_dir} -eq 0 ]; then
-    	echo &quot;!-- You must give the restore_dir, such as ./restore.sh /backup/20170126&quot;
-    	exit
-    fi
-    
-    # print your parameters
-    echo &quot;Your settings are :&quot;
-    echo &quot;\tmysql_data_dir       : $mysql_data_dir&quot;
-    echo &quot;\tmysql_before_restore : $mysql_before_restore_path&quot;
-    echo &quot;\trestore_buffer_size  : $restore_buffer_size&quot;
-    echo &quot;\trestore_dir          : $restore_dir&quot;
-    
-    num=$(ls -lh $restore_dir | awk 'BEGIN{i=-1}{i+=1}END{print i}')
-    base_dir=${restore_dir}/$(ls -lh $restore_dir | awk 'BEGIN{i=0}{if(i==1){a=$9} i+=1}END{print a}')
-    i=0
-    ls -lh $restore_dir | while read line
-    do
-    	sub_dir=$(echo $line | awk '{word=$9}END{print word}')
-    	cur_dir=${restore_dir}/$sub_dir
-    	if [ $i -eq 0 ]; then
-    		:
-    	elif [ $i -eq 1 ]; then
-    		innobackupex \
-    			--apply-log --use-memory=$restore_buffer_size \
-    			--redo-only $base_dir
-    	elif [ $i -lt $num ]; then
-    		innobackupex \
-    			--apply-log --use-memory=$restore_buffer_size \
-    			--redo-only $base_dir \
-    			--incremental-dir=$cur_dir
-    	else
-    		innobackupex \
-    			--apply-log --use-memory=$restore_buffer_size \
-    			$base_dir \
-    			--incremental-dir=$cur_dir
-    	fi
-    	i=$(($i+1))
-    done
-    
-    cd ${mysql_data_dir}/../
-    dirname=$(echo $mysql_data_dir | awk -F '/' '{print $4}')
-    zip -r ${mysql_before_restore_path}/$(date +%Y%m%d).zip $dirname
-    rm -rf $mysql_data_dir/*
-    
-    innobackupex --apply-log --use-memory=$restore_buffer_size $base_dir
-    innobackupex --copy-back $base_dir
-    
-    chown -R mysql:mysql ${mysql_data_dir}/*
+        #!/bin/sh
+        
+        # do restore for mysql
+        # ( 1. suggest that only root can rwx this file )
+        # ( 2. stop mysql before restore )
+        
+        # here, define your conf
+        mysql_data_dir=/var/lib/mysql
+        mysql_before_restore_path=/mydata/mysqlbefore
+        restore_buffer_size=64M
+        export PATH=/usr/local/xtrabackup/bin:$PATH
+        
+        # check parameters
+        restore_dir=$1
+        if [ ${#restore_dir} -eq 0 ]; then
+        	echo &quot;!-- You must give the restore_dir, such as ./restore.sh /backup/20170126&quot;
+        	exit
+        fi
+        
+        # print your parameters
+        echo &quot;Your settings are :&quot;
+        echo &quot;\tmysql_data_dir       : $mysql_data_dir&quot;
+        echo &quot;\tmysql_before_restore : $mysql_before_restore_path&quot;
+        echo &quot;\trestore_buffer_size  : $restore_buffer_size&quot;
+        echo &quot;\trestore_dir          : $restore_dir&quot;
+        
+        num=$(ls -lh $restore_dir | awk 'BEGIN{i=-1}{i+=1}END{print i}')
+        base_dir=${restore_dir}/$(ls -lh $restore_dir | awk 'BEGIN{i=0}{if(i==1){a=$9} i+=1}END{print a}')
+        i=0
+        ls -lh $restore_dir | while read line
+        do
+        	sub_dir=$(echo $line | awk '{word=$9}END{print word}')
+        	cur_dir=${restore_dir}/$sub_dir
+        	if [ $i -eq 0 ]; then
+        		:
+        	elif [ $i -eq 1 ]; then
+        		innobackupex \
+        			--apply-log --use-memory=$restore_buffer_size \
+        			--redo-only $base_dir
+        	elif [ $i -lt $num ]; then
+        		innobackupex \
+        			--apply-log --use-memory=$restore_buffer_size \
+        			--redo-only $base_dir \
+        			--incremental-dir=$cur_dir
+        	else
+        		innobackupex \
+        			--apply-log --use-memory=$restore_buffer_size \
+        			$base_dir \
+        			--incremental-dir=$cur_dir
+        	fi
+        	i=$(($i+1))
+        done
+        
+        cd ${mysql_data_dir}/../
+        dirname=$(echo $mysql_data_dir | awk -F '/' '{print $4}')
+        zip -r ${mysql_before_restore_path}/$(date +%Y%m%d).zip $dirname
+        rm -rf $mysql_data_dir/*
+        
+        innobackupex --apply-log --use-memory=$restore_buffer_size $base_dir
+        innobackupex --copy-back $base_dir
+        
+        chown -R mysql:mysql ${mysql_data_dir}/*
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 </description>
@@ -1790,255 +1907,6 @@ Tip : 建议把客户端的同步命令放入crontab里，定期自动同步or�
         
         
         <category>Elasticsearch</category>
-        
-      </item>
-    
-      <item>
-        <title>nginx代理多个flask</title>
-        <description>&lt;p&gt;本文讲述如何用nginx代理多个flask，从而进行负载均衡&lt;/p&gt;
-
-&lt;p&gt;所需准备 :&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;1. nginx  
-
-        它安装依赖的东西还不少，可以参考 http://www.cnblogs.com/skynet/p/4146083.html  
-
-2. flask  
-
-        sudo pip install Flask  
-
-3. uwsgi  
-
-        sudo pip install uwsgi  
-    
-        使用uwsgi的原因是，如果光溜溜的flask是很容易崩溃的，  
-        外面套一层uwsgi，实践检验能让flask强壮很多  
-    
-        若无法安装uwsgi这个库，则大多数原因是因为少了两个东西 :  
-    
-        ubuntu系列 :  
-            sudo apt-get install python-dev  
-            sudo apt-get install setuptools  
-    
-        centos系列 :  
-            sudo yum install python-devel  
-            sudo yum install setuptools  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;下面举个例子，讲讲具体的配置&lt;/p&gt;
-
-&lt;h3 id=&quot;flask&quot;&gt;一.　flask程序的信息&lt;/h3&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;1. 我的用flask库写的web服务端程序的根目录 :  
-
-        /home/seven/program/openmind_server/  
-
-2. 在这个目录下，我的程序的入口文件是 main.py  
-
-        即入口文件的绝对地址是 /home/seven/program/openmind_server/main.py  
-        
-        且为了使用方便，最好让这个脚本接受两个参数，分别作为这个进程绑定的地址和端口  
-        例如 :  
-        python main.py 127.0.0.1 8081  
-        python main.py 127.0.0.1 8082  
-
-3. 在这个脚本中，我的app的名称是 Server_App  
-
-        即 main.py 中，有类似这样的语句 :  
-        
-        Server_App = flask.Flask(__name__)  
-        Server_App.secret_key = '\r\x9d1\xd1\xccW\x9e\xa6\x9a\x97[\xb1=\x93\x87\x15s&amp;lt;\xe8\xe3\x13DL?'  
-        
-        # 注意，若你的flask程序在不同的机子上（一般生产环境下都是这样，是真正的多机负载均衡）  
-        # 则，这个 secret_key 要保持一致，否则session可能无法正常工作  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;uwsgi--uwsgi8081ini&quot;&gt;二.　uwsgi配置文件  uwsgi8081.ini&lt;/h3&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;[uwsgi]  
-
-socket = 127.0.0.1:8081  
-    绑定监听的地址和端口  
-        
-    实际生产环境下 :  
-        1. 建议nginx单独一台服务器，然后其他的flask都在同一网段的其他机子上  
-        2. uwsgi要在 nginx结点，及每台flask结点上 都要安装  
-        3. flask只要在每台flask结点上安装  
-        4. 这个uwsgi配置文件和对应的flask程序是在同一台机子上的  
-    
-
-master = true  
-
-pidfile = /mydata/openmind_server/pids/uwsgi8081.pid  
-    这个uwsgi进程的pid文件的路径（建议使用绝对路径）  
-
-chdir = /home/seven/program/openmind_server/  
-    你的用flask库编写的服务端程序的根目录的路径  
-    （建议使用绝对路径，且最后有'/'）  
-    （若flask程序位于不同机子上，则要保证各机子上的路径是一致的）  
-
-wsgi-file = main.py  
-    在上述目录下，你的入口脚本的名字  
-
-callable = Server_App  
-    在上述入口脚本中，你的flask的app对象的名字  
-
-processes = 2  
-    该值建议与CPU核数相同  
-
-threads = 4  
-    占用的线程数  
-
-stats = 127.0.0.1:9091  
-    查询状态信息的端口  
-
-logdate=true  
-
-daemonize=/mydata/openmind_server/logs/flask8081.log  
-    以后台方式运行，且指定日志文件的路径（建议使用绝对路径）  
-
-
-（ uwsgi8082.ini， uwsgi8083.ini， uwsgi8084.ini 与之类似，改端口和路径即可）  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;nginx-usrlocalnginxconfnginxconf&quot;&gt;三.　nginx配置文件 /usr/local/nginx/conf/nginx.conf&lt;/h3&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;worker_processes  2;  
-    # 建议与CPU核数相同  
-
-error_log  /mydata/nginx/log/error.log;  
-    # 错误日志的路径（建议使用绝对路径）  
-    # 且除了它，在 /usr/local/nginx/logs/error.log 也有一部分的错误日志  
-
-pid        /mydata/nginx/pid/nginx.pid;  
-    # 进程号文件的路径（建议使用绝对路径）  
-
-events {  
-    use epoll;  
-        # epoll效率比轮询要高  
-    multi_accept on;  
-    worker_connections  1024;  
-        # 最大连接数  
-}  
-
-
-http {  
-    include       mime.types;  
-    default_type  application/octet-stream;  
-
-    server_names_hash_bucket_size 128;  
-    client_header_buffer_size 32k;  
-    client_body_buffer_size 512k;  
-    client_max_body_size 32m;  
-    large_client_header_buffers 4 32k;  
-
-    access_log  /mydata/nginx/log/access.log;  
-        # 访问日志路径（建议使用绝对路径）  
-
-    sendfile        on;  
-    tcp_nodelay on;  
-    server_tokens off;  
-    access_log off;  
-    charset UTF-8;  
-    keepalive_timeout  60;  
-
-    open_file_cache max=1024 inactive=20s;  
-    open_file_cache_valid 60s;  
-    open_file_cache_min_uses 2;  
-
-    upstream my_servers {  
-        server 127.0.0.1:8081;  
-        server 127.0.0.1:8082;  
-        server 127.0.0.1:8083;  
-        server 127.0.0.1:8084;  
-    }  
-    # 转发配置 :  
-    # 一共可以转发到本机的8081,8082,8083,8084四个结点上  
-    # 实际生产环境中建议flask结点在其他机子上  
-
-    server {  
-        listen       80;  
-            # 对外暴露80端口  
-        server_name  localhost default backlog=256;  
-        access_log  /mydata/nginx/log/host.access.log;  
-
-        location / {  
-            uwsgi_pass my_servers;  
-            include uwsgi_params;  
-            uwsgi_param UWSGI_CHDIR /home/seven/program/openmind_server/;  
-            uwsgi_param UWSGI_SCRIPT main;  
-        }  
-        # 转发配置 :  
-        # 通过使用上面定义的 upstream my_servers 来进行负载均衡  
-        # 且指定flask程序的根目录  
-        # 且指定flask程序根目录下的入口脚本的名称（不包含后缀名）  
-
-        # redirect server error pages to the static page /50x.html  
-        error_page   500 502 503 504  /50x.html;  
-        location = /50x.html {  
-            root   html;  
-        }  
-    }  
-}  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;section&quot;&gt;四.　启动方式&lt;/h3&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;uwsgi --ini path/uwsgi8081.ini  
-    启动8081结点（以非root用户的身份来启动）  
-
-uwsgi --ini path/uwsgi8082.ini  
-    启动8082结点（以非root用户的身份来启动）  
-
-uwsgi --ini path/uwsgi8083.ini  
-    启动8083结点（以非root用户的身份来启动）  
-
-uwsgi --ini path/uwsgi8084.ini  
-    启动8084结点（以非root用户的身份来启动）  
-
-cd /usr/local/nginx/sbin  
-    进入nginx的脚本目录  
-
-./nginx  
-    启动nginx（注意要以root用户身份来启动）  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;section-1&quot;&gt;五.　重启方式&lt;/h3&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;uwsgi --reload path/uwsgi8081.pid  
-    重启8081结点（指定对应的pid文件，以非root身份）  
-
-uwsgi --reload path/uwsgi8082.pid  
-    重启8082结点（指定对应的pid文件，以非root身份）  
-
-uwsgi --reload path/uwsgi8083.pid  
-    重启8083结点（指定对应的pid文件，以非root身份）  
-
-uwsgi --reload path/uwsgi8084.pid  
-    重启8084结点（指定对应的pid文件，以非root身份）  
-
-cd /usr/local/nginx/sbin  
-    进入nginx的脚本目录  
-
-./nginx -s stop  
-    关闭nginx（注意要以root用户身份来关闭）  
-
-./nginx  
-    再次启动nginx（注意要以root用户身份来启动）  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-</description>
-        <pubDate>Fri, 09 Sep 2016 03:30:00 +0800</pubDate>
-        <link>http://localhost:4000/2016/09/09/Nginx-Proxy/</link>
-        <guid isPermaLink="true">http://localhost:4000/2016/09/09/Nginx-Proxy/</guid>
-        
-        
-        <category>Linux</category>
         
       </item>
     

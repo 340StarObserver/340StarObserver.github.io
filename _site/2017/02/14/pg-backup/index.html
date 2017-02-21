@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Postgres -- 备份恢复的三种方式</title>
+	<meta name="description" content="本篇的主要内容 :">
+	
+	<link rel="canonical" href="http://localhost:4000/2017/02/14/pg-backup/">
+	<link rel="alternate" type="application/rss+xml" title="Principality Of 340号恒星观测员" href="http://localhost:4000/feed.xml" />
+	
+	<!-- <link rel="stylesheet" href="/css/main.css"> -->
+    
+    <link rel="stylesheet" type="text/css" href="/static/css/bootstrap.min.css">
+    <link rel="stylesheet" type="text/css" href="/static/css/index.css">
+	<script type="text/javascript" src="/static/js/jquery-1.11.1.min.js"></script>
+	<script type="text/javascript" src="/static/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="/static/css/monokai_sublime.min.css">
+	<script type="text/javascript" src="/static/js/highlight.min.js"></script>
+
+    <!--
+    <link rel="stylesheet" type="text/css" href="http://apps.bdimg.com/libs/bootstrap/3.3.0/css/bootstrap.min.css">
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/jquery/2.1.1/jquery.min.js"></script>
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/bootstrap/3.3.0/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="http://apps.bdimg.com/libs/highlight.js/8.4/styles/monokai_sublime.min.css">
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/highlight.js/8.4/highlight.min.js"></script>
+    -->
+    
+	<script type="text/javascript" src="/static/js/index.js"></script>
+	<script>hljs.initHighlightingOnLoad();</script>
+</head>
+
+ <!--  <body data-spy="scroll" data-target="#myAffix"> -->
+  <body>
+
+    <header>
+
+<!-- navbar -->
+  <nav class="navbar navbar-inverse">
+  <div class="container">
+    <!-- Brand and toggle get grouped for better mobile display -->
+    <div class="navbar-header">
+      <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#bs-example-navbar-collapse-1">
+        <span class="sr-only">Toggle navigation</span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+      </button>
+      <a class="navbar-brand" href="/">Principality Of 340号恒星观测员</a>
+      <p class="navbar-text"></p>
+    </div>
+    <!-- Collect the nav links, forms, and other content for toggling -->
+    <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
+      <ul class="nav navbar-nav navbar-right">
+
+        
+          <li>
+        
+        <a href="/">Home</a></li>
+
+        
+          
+            
+              <li>
+            
+            <a href="/projects/"><span class="glyphicon "></span> Projects</a></li>
+          
+        
+          
+            
+              <li>
+            
+            <a href="/about/"><span class="glyphicon "></span> About</a></li>
+          
+        
+          
+        
+          
+        
+      </ul>
+    </div><!-- /.navbar-collapse -->
+  </div><!-- /.container-fluid -->
+</nav>
+
+</header>
+
+    <div id="main" class="container main">
+      <div class="row">
+  <div id="myArticle" class="col-sm-9">
+    <div class="post-area post">
+      <header>
+        <h1>Postgres -- 备份恢复的三种方式</h1>
+        <p>Feb 14, 2017</p>
+      </header>
+      <hr>
+      <article>
+        <p>本篇的主要内容 :</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    1. 方案一 : 基于 转储 的备份与恢复
+    2. 方案二 : 基于 归档 的备份和恢复
+    3. 方案三 : 基于 pg_rman 的全备与增备 ( 推荐 )
+</code></pre>
+</div>
+
+<h3 id="section">方案一.　基于转储的备份和恢复</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    A. script for backup ( sql_backup.sh )
+    
+    // 该脚本备份某个库
+    // 　　结果放入以当天日期为名的目录中
+    // 　　并把结果文件按256M拆分，接着每个文件单独压缩(因打包压缩会超出最大文件限制)
+    // 用法 : ./sql_backup.sh dbname
+    
+        #!/bin/sh
+        
+        # accept parameters
+        dbname=$1
+        if [ ${#dbname} -eq 0 ]; then
+        	echo "You must choose a database to backup"
+        	echo "Eg : ./sql_backup.sh dbname"
+        	exit
+        fi
+        
+        BackupDir=/mydata/pgbackup
+        
+        # environment variables
+        export PGUSER=postgres
+        export PGPASSWORD='xxxxxx'
+        export PGHOST=127.0.0.1
+        export PGPORT=5432
+        
+        # dump
+        CurDate=$(date +%Y%m%d)
+        mkdir $BackupDir/$CurDate
+        pg_dump -Fc $dbname | split -b 256M - $BackupDir/$CurDate/
+        
+        # compress each file separately
+        cd $BackupDir/$CurDate
+        ls -lh | while read line
+        do
+        	file=$(echo $line | awk '{word=$9}END{print word}')
+        	if [ ${#file} -gt 0 ]; then
+        		zip $file.zip $file
+        		rm $file
+        	fi
+        done
+        
+        echo "successfully backup to $BackupDir/$CurDate"
+    
+    
+    B. script for restore ( sql_restore.sh )
+    
+    // 该脚本恢复某个库
+    // 用法 : ./sql_restore.sh 某次备份的结果目录 新库名
+    // 例如 : ./sql_restore.sh /mydata/pgbackup/20170215
+    
+        #!/bin/sh
+        
+        # accept parameters
+        restore_dir=$1
+        new_dbname=$2
+        if [ ${#restore_dir} -eq 0 ] || [ ${#new_dbname} -eq 0 ]; then
+        	echo "!-- lack of parameters"
+        	echo "Eg : ./sql_restore.sh /mydata/pgbackup/20170215 newdb"
+        	exit
+        fi
+        
+        # environment variables
+        export PGUSER=postgres
+        export PGPASSWORD='xxxxxx'
+        export PGHOST=127.0.0.1
+        export PGPORT=5432
+        
+        # uncompress each file separately
+        cd $restore_dir
+        ls -lh | while read line
+        do
+        	file=$(echo $line | awk '{word=$9}END{print word}')
+        	if [ ${#file} -gt 0 ]; then
+        		unzip $file
+        		rm $file
+        	fi
+        done
+        
+        # restore
+        createdb $new_dbname
+        cat * | pg_restore -d $new_dbname
+        psql -d $new_dbname -c 'analyze'
+        
+        echo "successfully restore from $restore_dir to $new_dbname"
+</code></pre>
+</div>
+
+<h3 id="section-1">方案二.　基于 归档 的备份和恢复</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    1. 修改 postgresql.conf
+    
+        wal_level       = archive
+        archive_mode    = on
+        archive_command = 'test ! -f /usr/local/pgsql/archivedir/%f &amp;&amp; cp %p /usr/local/pgsql/archivedir/%f'
+        archive_timeout = 300
+        max_wal_senders = 4
+        // 如果你的事务不是很频繁，可以设置 archive_timeout，限制超过多少秒就把wal段归档
+    
+    
+    2. 修改 pg_hba.conf，添加一行 :
+    
+        host    replication     postgres        127.0.0.1/32            password
+        // 比如你要使用超级用户postgres来进行复制
+        // 改完这两个配置文件后重启服务
+    
+    
+    3. 先进行一次全备份( 基础备份 )
+    
+        pg_basebackup -h 127.0.0.1 -p 5432 -U postgres -D /mydata/pgbackup -Ft -z -P
+        // -D     指定备份目录
+        // -Ft -z 指定按照tar.gz来压缩
+        // -P     指定输出一些进度信息
+    
+    
+    4. 更改一些数据，模拟读写请求，然后等一会，直至/usr/local/pgsql/archivedir目录下出现了新的wal归档
+        // 如果等不及，可以用 select pg_switch_xlog(); 来强制更新wal段
+    
+    
+    5. 发生故障，如何恢复 ?
+    
+        第一步 : 关闭服务
+        
+        第二步 : 清空数据目录 ( 清空前建议打包压缩先放到其他地方，以免恢复失败时不至于服务都启动不了 )
+        
+        第三步 : 把之前做的基础备份放到数据目录下并还原 :
+        
+                mv /mydata/pgbackup/base.tar.gz /usr/local/pgsql/data/
+                cd /usr/local/pgsql/data
+                tar -xvf base.tar.gz
+                rm base.tar.gz
+                
+                rm -rf pg_xlog/*
+                mkdir pg_xlog/archive_status
+                chmod 700 pg_xlog/archive_status
+
+        第四步 : 创建 /usr/local/pgsql/data/recovery.conf，内容是 :
+                restore_command = 'cp /usr/local/pgsql/archivedir/%f %p'
+        
+        第五步 : 启动服务
+        // 过一会数据恢复好以后，可以看到数据目录下的 recovery.conf 后缀名变成了 done
+</code></pre>
+</div>
+
+<h3 id="pgrman---">方案三.　基于 pg_rman 的全备和增备( 推荐 )</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    1. postgresql.conf 的要求
+    
+        wal_level         = archive
+        
+        archive_mode      = on
+        archive_command   = 'test ! -f /usr/local/pgsql/archivedir/%f &amp;&amp; cp %p /usr/local/pgsql/archivedir/%f'
+        
+        log_destination   = 'csvlog'
+        logging_collector = on
+        log_directory     = '/usr/local/pgsql/logs'
+    
+    
+    2. 初始化备份目录
+    
+        pg_rman init -B /mydata/pgbackup -D /usr/local/pgsql/data
+        // -B 指定一个空的备份目录
+        // -D 指定原数据目录
+    
+    
+    3. 先来做一次全量备份
+    
+        pg_rman backup \
+            -B /mydata/pgbackup \
+            -D /usr/local/pgsql/data \
+            -b full \
+            -s -Z -C \
+            --keep-data-days=10 \
+            --keep-arclog-files=20 \
+            --keep-arclog-days=10 \
+            --keep-srvlog-files=20 \
+            --keep-srvlog-days=10 \
+            -h 127.0.0.1 -p 5432 -U postgres -d deepnote
+        // -b full              表示是全备份
+        // -s                   表示服务日志也要备份
+        // -Z                   表示备份要压缩
+        // -C                   表示要检查检查点
+        // --keep-data-days=10  表示这份全备要保持10天
+        
+        pg_rman show -B /mydata/pgbackup
+        // 结果 :
+            ============================================================================
+            Start                Time   Total    Data     WAL     Log  Backup   Status  
+            ============================================================================
+            2017-02-20 21:02:54    0m    34MB    ----    33MB   1023B  4046kB   DONE
+        // 根据这个时间(正是这次全备)，状态是DONE，说明全备成功
+        
+        pg_rman validate -B /mydata/pgbackup
+        // 每次做完一次备份( 不管是全备还是增备 )，都必须做校验
+        
+        pg_rman show -B /mydata/pgbackup
+        // 结果 :
+            ============================================================================
+            Start                Time   Total    Data     WAL     Log  Backup   Status  
+            ============================================================================
+            2017-02-20 21:02:54    0m    34MB    ----    33MB   1023B  4046kB   OK
+        // 根据这个时间(正是刚才的全备)，状态从原来的DONE变成了OK，说明校验成功
+    
+    
+    4. 再来做一次增量备份
+        
+        pg_rman backup \
+            -B /mydata/pgbackup \
+            -D /usr/local/pgsql/data \
+            -b incremental \
+            -s -Z -C \
+            --keep-data-days=10 \
+            --keep-arclog-files=20 \
+            --keep-arclog-days=10 \
+            --keep-srvlog-files=20 \
+            --keep-srvlog-days=10 \
+            -h 127.0.0.1 -p 5432 -U postgres -d deepnote
+        
+        pg_rman show -B /mydata/pgbackup
+        // 结果 :
+            ============================================================================
+            Start                Time   Total    Data     WAL     Log  Backup   Status  
+            ============================================================================
+            2017-02-20 21:05:49    0m    ----   492kB    33MB      0B   102kB   DONE
+            2017-02-20 21:02:54    0m    34MB    ----    33MB   1023B  4046kB   OK
+        // 从 Total 字段，可以看出哪份是全备，哪份是增备
+        
+        pg_rman validate -B /mydata/pgbackup
+        // 每次做完一次备份( 不管是全备还是增备 )，都必须做校验
+        
+        pg_rman show -B /mydata/pgbackup
+        // 结果 :
+            ============================================================================
+            Start                Time   Total    Data     WAL     Log  Backup   Status  
+            ============================================================================
+            2017-02-20 21:05:49    0m    ----   492kB    33MB      0B   102kB   OK
+            2017-02-20 21:02:54    0m    34MB    ----    33MB   1023B  4046kB   OK
+        // 看到刚才的增备，状态从DONE变成了OK，说明这份增备也校验成功
+</code></pre>
+</div>
+
+<h3 id="pgrman">四.　基于 pg_rman，如何删除不想要的备份</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    在进行全备和增备的时候，参数 --keep-data-days 表示该全备(or增备)的有效期
+    然而可能等不及过期就想删掉某些备份，我们知道强迫症患者有时候是很可怕的 &gt; &lt;
+    
+    
+    // 假设此时 pg_rman show -B /mydata/pgbackup 的结果是这样的 :
+        ============================================================================
+        Start                Time   Total    Data     WAL     Log  Backup   Status  
+        ============================================================================
+        2017-02-20 21:13:51    0m    ----   336kB    33MB      0B    87kB   OK
+        2017-02-20 21:12:05    0m    ----   287kB    33MB      0B    84kB   OK
+        2017-02-20 21:09:25    0m    34MB    ----    33MB      0B  4047kB   OK
+        2017-02-20 21:05:49    0m    ----   492kB    33MB      0B   102kB   OK
+        2017-02-20 21:02:54    0m    34MB    ----    33MB   1023B  4046kB   OK
+    // 此时有两条备份线 :
+    // 备份线1 : 2017-02-20 21:02:54(全)  --&gt;  2017-02-20 21:05:49(增)
+    // 备份线2 : 2017-02-20 21:09:25(全)  --&gt;  2017-02-20 21:12:05(增)  --&gt;  2017-02-20 21:13:51(增)
+    
+    
+    pg_rman delete 2017-02-20 21:13:51 -B /mydata/pgbackup
+    // 执行完再用show命令看看会发生什么 :
+        ============================================================================
+        Start                Time   Total    Data     WAL     Log  Backup   Status  
+        ============================================================================
+        2017-02-20 21:13:51    0m    ----   336kB    33MB      0B    87kB   OK
+        2017-02-20 21:12:05    0m    ----   287kB    33MB      0B    84kB   OK
+        2017-02-20 21:09:25    0m    34MB    ----    33MB      0B  4047kB   OK
+    // 特别注意一下 delete 参数的含义 : 要恢复到这个时刻，哪些备份是不必要的
+    // 所以，我要恢复到 2017-02-20 21:13:51，只要前三份备份就够了
+    // 即， 21:02:54那个全备 和 21:05:49那个增备，没有也不妨碍
+    
+    
+    pg_rman show timeline -B /mydata/pgbackup
+    // 结果 :
+        ============================================================
+        Start                Mode  Current TLI  Parent TLI  Status  
+        ============================================================
+        2017-02-20 21:13:51  INCR            3           0  OK
+        2017-02-20 21:12:05  INCR            3           0  OK
+        2017-02-20 21:09:25  FULL            3           0  OK
+    // show timeline 能更方便观察时间线和全备增备
+</code></pre>
+</div>
+
+<h3 id="pgrman-1">五.　基于 pg_rman，如何恢复到指定时间</h3>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    // 假设此时的 pg_rman show -B /mydata/pgbackup 的结果是这样的 :
+        ============================================================================
+        Start                Time   Total    Data     WAL     Log  Backup   Status  
+        ============================================================================
+        2017-02-21 08:56:51    0m    ----   509kB    67MB   3118B   156kB   OK
+        2017-02-20 21:13:51    0m    ----   336kB    33MB      0B    87kB   OK
+        2017-02-20 21:12:05    0m    ----   287kB    33MB      0B    84kB   OK
+        2017-02-20 21:09:25    0m    34MB    ----    33MB      0B  4047kB   OK
+    
+    
+    // 比如我要恢复到 2017-02-20 21:13:00 这个时刻，怎么办 ?
+    // 2017-02-20 21:13:00　属于　2017-02-20 21:12:05　和　2017-02-20 21:13:51　之间
+    // 即需要使用如下三份备份 :
+    // 　　2017-02-20 21:09:25　这个全量备份
+    // 　　2017-02-20 21:12:05　这个增量备份
+    // 　　2017-02-20 21:13:51　这个增量备份
+    
+    
+    // 注意 :
+    // 我的表空间，x_log都在数据目录下，即 /usr/local/pgsql/data
+    // 我的wal段文件存储目录             /usr/local/pgsql/archivedir
+    
+    
+    pg_ctl stop -m fast -D /usr/local/pgsql/data
+    // 注意，在恢复数据前，最好先关闭服务，且使用 -m fast模式为佳
+    // 而且最好把原来的数据目录先备份一下
+    
+    
+    pg_rman restore \
+        --recovery-target-time "2017-02-20 21:13:00" \
+        -B /mydata/pgbackup \
+        -D /usr/local/pgsql/data
+    // 恢复到目标时间
+    
+    
+    vi /usr/local/pgsql/data/recovery.conf
+    // 结果 :
+        # recovery.conf generated by pg_rman 1.2.11
+        restore_command = 'cp /usr/local/pgsql/archivedir/%f %p'
+        recovery_target_time = '2017-02-20 21:13:00'
+        recovery_target_timeline = '4'
+    // 没错
+    
+    
+    最后再次启动服务，会发现数据不是最新的(确实是"2017-02-20 21:13:51"这份备份截止时的)
+</code></pre>
+</div>
+
+      </article>
+      <hr>
+        <div class="bdsharebuttonbox">
+            <a href="#" class="bds_more" data-cmd="more"></a>
+            <a href="#" class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+            <a href="#" class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+            <a href="#" class="bds_douban" data-cmd="douban" title="分享到豆瓣网"></a>
+            <a href="#" class="bds_fbook" data-cmd="fbook" title="分享到Facebook"></a>
+            <a href="#" class="bds_copy" data-cmd="copy" title="分享到复制网址"></a>
+        </div>
+        <script>
+            window._bd_share_config={"common":{"bdSnsKey":{},"bdText":"","bdMini":"2","bdMiniList":false,"bdPic":"","bdStyle":"1","bdSize":"24"},"share":{}};with(document)0[(getElementsByTagName('head')[0]||body).appendChild(createElement('script')).src='http://bdimg.share.baidu.com/static/api/js/share.js?v=89860593.js?cdnversion='+~(-new Date()/36e5)];
+        </script>
+    </div>
+	
+    <!-- duoshuo.com javascript include code. -->    
+    
+    <!-- disqus.com javascript include code. -->
+	
+    <div class="post-area post comment">
+        <div id="disqus_thread"></div>
+    </div>
+	<script>
+		var disqus_config = function () {
+			this.page.url = "http://340StarObserver.github.io/2017/02/14/pg-backup/"; 
+			this.page.identifier = "/2017/02/14/pg-backup"; 
+		};
+		(function() {
+			var d = document, s = d.createElement('script');
+			s.src = '/static/js/embed.js';
+			s.setAttribute('data-timestamp', +new Date());
+			(d.head || d.body).appendChild(s);
+		})();
+	</script>
+	
+    
+  </div>
+  
+  <div id="content" class="col-sm-3">
+    <!-- <div id="myAffix" class="shadow-bottom-center hidden-xs" data-spy="affix" data-offset-top="0" data-offset-bottom="-20"> -->
+    <div id="myAffix" class="shadow-bottom-center hidden-xs" >
+      <div class="categories-list-header">
+        Content
+      </div>
+      <div class="content-text"></div>
+    </div>
+  </div>
+  
+</div>
+    </div>
+
+    
+    <div id="top" data-toggle="tooltip" data-placement="left" title="back to top">
+      <a href="javascript:;">
+        <div class="arrow"></div>
+        <div class="stick"></div>
+      </a>
+    </div>
+
+    <footer class="">
+  <div class="container">
+    <div class="row">
+      <div class="col-md-12">
+        <a href="mailto:lvyang@ippclub.org"><span class="glyphicon glyphicon-envelope"></span> lvyang@ippclub.org</a>
+        <span class="point"> · </span>
+        
+          <a href="https://github.com/340StarObserver">
+            <span class="icon">
+              <svg viewBox="0 0 16 16">
+                <path fill="#aaa" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+              </svg>
+            </span>
+            Github
+            <!-- <span>340StarObserver</span> -->
+          </a>
+          
+          <span class="point"> · </span>
+          <span><a href="https://github.com/340StarObserver/340StarObserver.github.io/_posts/Postgresql/2017-02-14-pg-backup.md">View source</a></span>
+          <span class="point"> · </span>
+          <span><a class="newpost" href="javascript:;">New post</a></span>
+		  <span class="point"> · </span>
+          <span><a href="/feed.xml">RSS</a></span>
+          <span class="point"> · </span>
+          <span>&copy; 2016 340号恒星观测员</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+    <script type="text/javascript">
+    function OnClickNewPost()
+    {
+        var title = prompt("Please enter title of your post");
+        if (title!=null){
+            title = title.replace(" ", "-");
+            var currentdate = new Date();
+            var urlNewPage = "https://github.com/340StarObserver/340StarObserver.github.io/?filename=_posts/" 
+                + currentdate.getFullYear() + "-" + (currentdate.getMonth()+1) + "-" + currentdate.getDate() + "-" + title + ".md";
+                
+            var defaultText =  [
+                '---',
+                'layout: post',
+                'comments: true',
+                'categories: diary',
+                '---',
+                '## Title',
+                'text'
+                ].join('\n');
+            urlNewPage += "&value=" + encodeURIComponent(defaultText);
+            window.open(urlNewPage);
+        }
+    }
+    
+    $(function() {
+      // CreateNewPostLinks
+      $('.newpost').each(function(){
+          $(this).click(OnClickNewPost);
+      });
+    });
+</script>
+  
+  </body>
+</html>

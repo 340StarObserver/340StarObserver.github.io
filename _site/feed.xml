@@ -5,17 +5,17 @@
     <description>some technical blogs</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Wed, 15 Feb 2017 19:28:05 +0800</pubDate>
-    <lastBuildDate>Wed, 15 Feb 2017 19:28:05 +0800</lastBuildDate>
+    <pubDate>Wed, 22 Feb 2017 16:37:21 +0800</pubDate>
+    <lastBuildDate>Wed, 22 Feb 2017 16:37:21 +0800</lastBuildDate>
     <generator>Jekyll v3.3.1</generator>
     
       <item>
-        <title>Postgres -- 全备 &amp; 增备</title>
+        <title>Postgres -- 备份恢复的三种方式</title>
         <description>&lt;p&gt;本篇的主要内容 :&lt;/p&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    1. 方案一 : 基于 转储 的备份和恢复
-    2. 方案二 : 基于 WAL 的备份和恢复
-    3. 备份和恢复的脚本
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    1. 方案一 : 基于 转储 的备份与恢复
+    2. 方案二 : 基于 归档 的备份和恢复
+    3. 方案三 : 基于 pg_rman 的全备与增备 ( 推荐 )
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
@@ -105,6 +105,256 @@
         psql -d $new_dbname -c 'analyze'
         
         echo &quot;successfully restore from $restore_dir to $new_dbname&quot;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;section-1&quot;&gt;方案二.　基于 归档 的备份和恢复&lt;/h3&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    1. 修改 postgresql.conf
+    
+        wal_level       = archive
+        archive_mode    = on
+        archive_command = 'test ! -f /usr/local/pgsql/archivedir/%f &amp;amp;&amp;amp; cp %p /usr/local/pgsql/archivedir/%f'
+        archive_timeout = 300
+        max_wal_senders = 4
+        // 如果你的事务不是很频繁，可以设置 archive_timeout，限制超过多少秒就把wal段归档
+    
+    
+    2. 修改 pg_hba.conf，添加一行 :
+    
+        host    replication     postgres        127.0.0.1/32            password
+        // 比如你要使用超级用户postgres来进行复制
+        // 改完这两个配置文件后重启服务
+    
+    
+    3. 先进行一次全备份( 基础备份 )
+    
+        pg_basebackup -h 127.0.0.1 -p 5432 -U postgres -D /mydata/pgbackup -Ft -z -P
+        // -D     指定备份目录
+        // -Ft -z 指定按照tar.gz来压缩
+        // -P     指定输出一些进度信息
+    
+    
+    4. 更改一些数据，模拟读写请求，然后等一会，直至/usr/local/pgsql/archivedir目录下出现了新的wal归档
+        // 如果等不及，可以用 select pg_switch_xlog(); 来强制更新wal段
+    
+    
+    5. 发生故障，如何恢复 ?
+    
+        第一步 : 关闭服务
+        
+        第二步 : 清空数据目录 ( 清空前建议打包压缩先放到其他地方，以免恢复失败时不至于服务都启动不了 )
+        
+        第三步 : 把之前做的基础备份放到数据目录下并还原 :
+        
+                mv /mydata/pgbackup/base.tar.gz /usr/local/pgsql/data/
+                cd /usr/local/pgsql/data
+                tar -xvf base.tar.gz
+                rm base.tar.gz
+                
+                rm -rf pg_xlog/*
+                mkdir pg_xlog/archive_status
+                chmod 700 pg_xlog/archive_status
+
+        第四步 : 创建 /usr/local/pgsql/data/recovery.conf，内容是 :
+                restore_command = 'cp /usr/local/pgsql/archivedir/%f %p'
+        
+        第五步 : 启动服务
+        // 过一会数据恢复好以后，可以看到数据目录下的 recovery.conf 后缀名变成了 done
+        // 最后不要忘了恢复后执行一下 vacuum 或 analyze
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;pgrman---&quot;&gt;方案三.　基于 pg_rman 的全备和增备( 推荐 )&lt;/h3&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    1. postgresql.conf 的要求
+    
+        wal_level         = archive
+        
+        archive_mode      = on
+        archive_command   = 'test ! -f /usr/local/pgsql/archivedir/%f &amp;amp;&amp;amp; cp %p /usr/local/pgsql/archivedir/%f'
+        
+        log_destination   = 'csvlog'
+        logging_collector = on
+        log_directory     = '/usr/local/pgsql/logs'
+    
+    
+    2. 初始化备份目录
+    
+        pg_rman init -B /mydata/pgbackup -D /usr/local/pgsql/data
+        // -B 指定一个空的备份目录
+        // -D 指定原数据目录
+    
+    
+    3. 先来做一次全量备份
+    
+        pg_rman backup \
+            -B /mydata/pgbackup \
+            -D /usr/local/pgsql/data \
+            -b full \
+            -s -Z -C \
+            --keep-data-days=10 \
+            --keep-arclog-files=20 \
+            --keep-arclog-days=10 \
+            --keep-srvlog-files=20 \
+            --keep-srvlog-days=10 \
+            -h 127.0.0.1 -p 5432 -U postgres -d deepnote
+        // -b full              表示是全备份
+        // -s                   表示服务日志也要备份
+        // -Z                   表示备份要压缩
+        // -C                   表示要检查检查点
+        // --keep-data-days=10  表示这份全备要保持10天
+        
+        pg_rman show -B /mydata/pgbackup
+        // 结果 :
+            ============================================================================
+            Start                Time   Total    Data     WAL     Log  Backup   Status  
+            ============================================================================
+            2017-02-20 21:02:54    0m    34MB    ----    33MB   1023B  4046kB   DONE
+        // 根据这个时间(正是这次全备)，状态是DONE，说明全备成功
+        
+        pg_rman validate -B /mydata/pgbackup
+        // 每次做完一次备份( 不管是全备还是增备 )，都必须做校验
+        
+        pg_rman show -B /mydata/pgbackup
+        // 结果 :
+            ============================================================================
+            Start                Time   Total    Data     WAL     Log  Backup   Status  
+            ============================================================================
+            2017-02-20 21:02:54    0m    34MB    ----    33MB   1023B  4046kB   OK
+        // 根据这个时间(正是刚才的全备)，状态从原来的DONE变成了OK，说明校验成功
+    
+    
+    4. 再来做一次增量备份
+        
+        pg_rman backup \
+            -B /mydata/pgbackup \
+            -D /usr/local/pgsql/data \
+            -b incremental \
+            -s -Z -C \
+            --keep-data-days=10 \
+            --keep-arclog-files=20 \
+            --keep-arclog-days=10 \
+            --keep-srvlog-files=20 \
+            --keep-srvlog-days=10 \
+            -h 127.0.0.1 -p 5432 -U postgres -d deepnote
+        
+        pg_rman show -B /mydata/pgbackup
+        // 结果 :
+            ============================================================================
+            Start                Time   Total    Data     WAL     Log  Backup   Status  
+            ============================================================================
+            2017-02-20 21:05:49    0m    ----   492kB    33MB      0B   102kB   DONE
+            2017-02-20 21:02:54    0m    34MB    ----    33MB   1023B  4046kB   OK
+        // 从 Total 字段，可以看出哪份是全备，哪份是增备
+        
+        pg_rman validate -B /mydata/pgbackup
+        // 每次做完一次备份( 不管是全备还是增备 )，都必须做校验
+        
+        pg_rman show -B /mydata/pgbackup
+        // 结果 :
+            ============================================================================
+            Start                Time   Total    Data     WAL     Log  Backup   Status  
+            ============================================================================
+            2017-02-20 21:05:49    0m    ----   492kB    33MB      0B   102kB   OK
+            2017-02-20 21:02:54    0m    34MB    ----    33MB   1023B  4046kB   OK
+        // 看到刚才的增备，状态从DONE变成了OK，说明这份增备也校验成功
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;pgrman&quot;&gt;四.　基于 pg_rman，如何删除不想要的备份&lt;/h3&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    在进行全备和增备的时候，参数 --keep-data-days 表示该全备(or增备)的有效期
+    然而可能等不及过期就想删掉某些备份，我们知道强迫症患者有时候是很可怕的 &amp;gt; &amp;lt;
+    
+    
+    // 假设此时 pg_rman show -B /mydata/pgbackup 的结果是这样的 :
+        ============================================================================
+        Start                Time   Total    Data     WAL     Log  Backup   Status  
+        ============================================================================
+        2017-02-20 21:13:51    0m    ----   336kB    33MB      0B    87kB   OK
+        2017-02-20 21:12:05    0m    ----   287kB    33MB      0B    84kB   OK
+        2017-02-20 21:09:25    0m    34MB    ----    33MB      0B  4047kB   OK
+        2017-02-20 21:05:49    0m    ----   492kB    33MB      0B   102kB   OK
+        2017-02-20 21:02:54    0m    34MB    ----    33MB   1023B  4046kB   OK
+    // 此时有两条备份线 :
+    // 备份线1 : 2017-02-20 21:02:54(全)  --&amp;gt;  2017-02-20 21:05:49(增)
+    // 备份线2 : 2017-02-20 21:09:25(全)  --&amp;gt;  2017-02-20 21:12:05(增)  --&amp;gt;  2017-02-20 21:13:51(增)
+    
+    
+    pg_rman delete 2017-02-20 21:13:51 -B /mydata/pgbackup
+    // 执行完再用show命令看看会发生什么 :
+        ============================================================================
+        Start                Time   Total    Data     WAL     Log  Backup   Status  
+        ============================================================================
+        2017-02-20 21:13:51    0m    ----   336kB    33MB      0B    87kB   OK
+        2017-02-20 21:12:05    0m    ----   287kB    33MB      0B    84kB   OK
+        2017-02-20 21:09:25    0m    34MB    ----    33MB      0B  4047kB   OK
+    // 特别注意一下 delete 参数的含义 : 要恢复到这个时刻，哪些备份是不必要的
+    // 所以，我要恢复到 2017-02-20 21:13:51，只要前三份备份就够了
+    // 即， 21:02:54那个全备 和 21:05:49那个增备，没有也不妨碍
+    
+    
+    pg_rman show timeline -B /mydata/pgbackup
+    // 结果 :
+        ============================================================
+        Start                Mode  Current TLI  Parent TLI  Status  
+        ============================================================
+        2017-02-20 21:13:51  INCR            3           0  OK
+        2017-02-20 21:12:05  INCR            3           0  OK
+        2017-02-20 21:09:25  FULL            3           0  OK
+    // show timeline 能更方便观察时间线和全备增备
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;pgrman-1&quot;&gt;五.　基于 pg_rman，如何恢复到指定时间&lt;/h3&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    // 假设此时的 pg_rman show -B /mydata/pgbackup 的结果是这样的 :
+        ============================================================================
+        Start                Time   Total    Data     WAL     Log  Backup   Status  
+        ============================================================================
+        2017-02-21 08:56:51    0m    ----   509kB    67MB   3118B   156kB   OK
+        2017-02-20 21:13:51    0m    ----   336kB    33MB      0B    87kB   OK
+        2017-02-20 21:12:05    0m    ----   287kB    33MB      0B    84kB   OK
+        2017-02-20 21:09:25    0m    34MB    ----    33MB      0B  4047kB   OK
+    
+    
+    // 比如我要恢复到 2017-02-20 21:13:00 这个时刻，怎么办 ?
+    // 2017-02-20 21:13:00　属于　2017-02-20 21:12:05　和　2017-02-20 21:13:51　之间
+    // 即需要使用如下三份备份 :
+    // 　　2017-02-20 21:09:25　这个全量备份
+    // 　　2017-02-20 21:12:05　这个增量备份
+    // 　　2017-02-20 21:13:51　这个增量备份
+    
+    
+    // 注意 :
+    // 我的表空间，x_log都在数据目录下，即 /usr/local/pgsql/data
+    // 我的wal段文件存储目录             /usr/local/pgsql/archivedir
+    
+    
+    pg_ctl stop -m fast -D /usr/local/pgsql/data
+    // 注意，在恢复数据前，最好先关闭服务，且使用 -m fast模式为佳
+    // 而且最好把原来的数据目录先备份一下
+    
+    
+    pg_rman restore \
+        --recovery-target-time &quot;2017-02-20 21:13:00&quot; \
+        -B /mydata/pgbackup \
+        -D /usr/local/pgsql/data
+    // 恢复到目标时间
+    
+    
+    vi /usr/local/pgsql/data/recovery.conf
+    // 结果 :
+        # recovery.conf generated by pg_rman 1.2.11
+        restore_command = 'cp /usr/local/pgsql/archivedir/%f %p'
+        recovery_target_time = '2017-02-20 21:13:00'
+        recovery_target_timeline = '4'
+    // 没错
+    
+    
+    最后再次启动服务，会发现数据不是最新的(确实是&quot;2017-02-20 21:13:51&quot;这份备份截止时的)
+    // 最后不要忘了恢复后执行一下 vacuum 或 analyze
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 </description>

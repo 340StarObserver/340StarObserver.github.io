@@ -1,273 +1,214 @@
 ---
 layout: post
-title:  "基于日志点的Mysql主从复制"
-date:   2016-11-21 19:13:00
+title:  "Mysql -- GTID主从方案的学习"
+date:   2017-03-15 15:13:00
 categories: Mysql
 comments: true
 ---
 
 
-本篇讲述我学习mysql基于二进制日志的复制，主要内容是 :  
+本篇讲述我学习mysql-GTID主从复制，主要内容是 :
 
-        1. 方案一 : 基于 mysqldump    的主从  
-        2. 方案二 : 基于 innobackupex 的主从( 推荐 )  
-        3. 主从切换  
-
-
-我的环境是 :  
-
-        主结点 : ipA:3306  
-        从结点 : ipB:3306  
-        // iptables已配置，允许访问3306端口  
+        1. 基于事务的主从配置
+        2. 主从切换
 
 
-### 一.　基于 mysqldump 的主从 ###
+我的环境是 :
+
+        主结点 ipA : 3306
+        从结点 ipB : 3306
+        // iptables已配置，允许访问3306端口
 
 
-#### 1-1. 在主结点上建立用来复制的用户 ####
+#### 1. 我的配置文件 ####
 
-        // 首先，主结点的配置文件中以下几项要设置 :  
+        [mysqld]
+        log_bin                      = /mysql/logs/bin.log
+        binlog-format                = row
+        binlog-checksum              = CRC32
+        binlog-rows-query-log-events = 1
         
-        log_bin = /var/run/mysqld/bin.log
+        log-slave-updates      = true
+        skip_slave_start       = 1
+        slave-parallel-workers = 2
+        
+        gtid-mode                 = on
+        enforce-gtid-consistency  = true
+        master-info-repository    = TABLE
+        relay-log-info-repository = TABLE
+        
+        datadir = /var/lib/mysql
+        socket  = /mysql/sock/mysql.sock
+        
         server-id = 10
+        user      = mysql
+        port      = 3306
         
-        // 进入主结点，进行如下操作 :  
-
-        create user 'seven'@'%' identified by 'xxxxxx';  
-            // 创建用户seven，并且是任何网段的（即slave可以是任何网段下的），用来作为复制的用户  
+        character-set-server = utf8
+        symbolic-links       = 0
+        sql_mode             = NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES
         
-        grant replication slave on *.* to 'seven'@'%' identified by 'xxxxxx';  
-            // 为这个用户授权，可以复制任何库的任何表  
-
-
-#### 1-2. 备份主结点的数据 ####
-
-        mysqldump \  
-            --single-transaction \  
-            --master-data=2 \  
-            --triggers \  
-            --routines \  
-            university -h localhost -u root -p > university.sql  
-            // 导出university这个库  
-            // 参数 --single-transaction 是用来保证事务完整性  
-            // 参数 --master-data = 1    是表示在备份文件中不注销change-master命令  
-            // 参数 --master-data = 2    是表示在备份文件中会注销change-master命令  
-            // 参数 --triggers           是表示把触发器也导出  
-            // 参数 --routines           是表示把存储过程也导出  
-
-        more university.sql  
-            // 查看导出的备份文件，里面有一行 -- CHANGE MASTER TO MASTER_LOG_FILE='bin.000002', MASTER_LOG_POS=120;  
-            // 其中的 --              表示是注释，对应了刚才的 --master-data = 2 这个参数  
-            // 其中的 MASTER_LOG_FILE 表示日志文件，会在之后用到  
-            // 其中的 MASTER_LOG_POS  表示日志点，会在之后用到  
-            // 注意，这两个值也可以通过　show master status\G; 来查看  
+        [client]
+        default-character-set = utf8
+        socket = /mysql/sock/mysql.sock
         
-        把导出的这个备份文件拷到从结点上（可以使用sftp,scp等）  
+        [mysqld_safe]
+        log-error = /var/log/mysqld.log
+        pid-file  = /mysql/pids/mysqld.pid
+        socket    = /mysql/sock/mysql.sock
         
+        // 注意
+        // 1. 上面出现的路径，确保所属人和所属组都是mysql
+        // 2. log_bin       不能位于临时目录下
+        // 3. binlog-format 必须是 row
+        // 4. binlog-rows-query-log-events=1 表示把sql语句也记下来
+        // 5. log-slave-updates=true         表示从结点上也要更新日志
+        // 6. skip_slave_start=1             表示从结点启动后，不会自动开启slave进程
+        // 7. slave-parallel-workers=2       表示多线程复制，建议业务拆分，分成多个库，有效利用多线程复制
+        // 8. 三个socket路径要一致
+        // 9. 主结点和从结点的配置文件中，唯一不同的是 server-id
 
-#### 1-3.　在从结点上恢复数据 ####
 
-        // 首先，从结点的配置文件中以下几项要配置 :  
+#### 2. 检查连接是否正常 ####
+
+        在所有结点上，都试试看 :
+            mysql -h localhost  -P 3306 -u root -p
+            mysql -h 该结点的地址 -P 3306 -u root -p
         
-        skip_slave_start = 1    # manually use start slave to start the slave process
-        read_only        = 1    # this slave is read-only
-        server-id        = 20
-            // 注意，从结点上建议关闭 log_bin  
-            // 注意，每个结点的server-id是不同的  
-
-        mysql -h localhost -u root -p university < university.sql  
-            // 注意，事先要创建好university这个库，然后才能导入  
-
-
-#### 1-4. 在从结点上 change master ####
-
-        进入从结点的mysql  
+        经常会出现改完配置文件后，发现无法登入的情况，此时需要重设root密码 + 增加远程连接的权限
         
-        change master to master_host = 'ipA',  
-            master_port = 3306,  
-            master_user = 'seven',  
-            master_password = 'xxxxxx',  
-            master_log_file = 'bin.000002',  
-            master_log_pos = 120;  
-            // 参数 master_host     是主结点的地址  
-            // 参数 master_user     是主结点上之前创建的用来复制的用户  
-            // 参数 master_password 是主结点上之前创建的用来复制的用户的密码  
-            // 参数 master_log_file 是上面提到的备份文件中的那一行里的日志文件  
-            // 参数 master_log_pos  是上面提到的备份文件中的那一行里的日志点  
+        mysqld_safe --skip-grant-tables
+            // 绕过权限验证来启动mysql
+            // 注意，执行它之前，请先关闭mysql
         
-        start slave;  
-            // 启动slave复制进程  
-        
-        show slave status \G  
-            // 查看slave进程的状态，若发现 :  
-            // Slave_IO_Running : Yes  
-            // Slave_SQL_Running: Yes  
-            // 则主从配置基本上可以放心成功了  
-
-
-#### 1-5.　验证主从配置 ####
-
-        在主结点上插入几条数据  
-        
-        在从结点上查询是否有了那几条新数据  
-
----
-
-
-### 二.　基于 innobackupex 的主从 ###
-
-
-#### 2-1.　预准备 : 配置文件 + 创建用来复制的用户 ####
-
-        主结点 :  
-        log_bin = /var/run/mysqld/bin.log
-        binlog_format = mixed
-        server-id = 10
-        skip_slave_start = 1
-        
-        从结点 :  
-        log_bin = /var/run/mysqld/bin.log
-        binlog_format = mixed
-        server-id = 20
-        skip_slave_start = 1
-            // 注意，主结点和从结点上，建议都开启log_bin，因为这样便于进行主从切换  
-            // 注意，主结点和所有的从结点，server-id一定不能相同  
-        
-        
-        在所有结点上(主结点和从结点都要，便于进行主从切换)，创建用来复制的用户 :  
-        
-        create user 'seven'@'%' identified by 'xxxxxx';  
-            // 创建用户seven，并且是任何网段的（即slave可以是任何网段下的），用来作为复制的用户  
-        
-        grant replication slave on *.* to 'seven'@'%' identified by 'xxxxxx';  
-            // 为这个用户授权，可以复制任何库的任何表  
-
-
-#### 2-2.　备份主结点的数据 ####
-
-        innobackupex \  
-            --defaults-file=/etc/my.cnf \  
-            --host=ipA --port=3306 \  
-            --user=root --password=xxxxxx /mydata/mysqlbackup  
+        另外开一个Terminal窗口，执行以下操作 :
+            mysql
+            > use mysql
+            > update user set password=password("NewPwd") where user="root";
+            > flush privileges;
+            > exit
             
-            // 进行全备份  
-            // 备份到 /mydata/mysqlbackup 这个目录下，会产生一个以时间戳为名字的目录  
-            // 注意，强烈推荐像这样把所有库一起备份  
-            // 　　否则单单备份某个库，即mysql系统本身的一些库没有被备份的话  
-            // 　　之后恢复的时候，把数据目录一删，会导致恢复后无法读出数据的  
-
-
-        innobackupex \  
-            --defaults-file=/etc/my.cnf \  
-            --host=ipA --port=3306 \  
-            --user=root --password=xxxxxx \  
-            --apply-log /mydata/mysqlbackup/2017-01-29_21-03-48  
+            pkill -KILL -t pts/0
+                // 杀掉原先用mysqld_safe方式启动的mysql
             
-            // 用来保持事务的一致性  
-            // 此处的 /mydata/mysqlbackup/2017-01-29_21-03-48 便是刚才全备份的时候产出的目录  
-            // 　　需要把该目录拷贝到新的从结点上  
-        
-        
-        下面是线上添加从结点的操作  
-
-
-#### 2-3.　在从结点上恢复数据 ####
-
-        // 在mysql关闭的情况下，执行恢复数据的操作  
-        
-        // 首先，需要清空datadir  
-        // ( 建议清空它之前，先压缩拷贝到安全的地方，万一之后的恢复操作失败，也不至于让mysql崩溃无法启动 )  
-        
-        // 然后 :  
-        innobackupex \  
-            --defaults-file=/etc/my.cnf \  
-            --host=ipB --port=3306 \  
-            --user=root --password=xxxxxx \  
-            --copy-back /mydata/mysqlbackup/2017-01-29_21-03-48  
+            再次启动mysql
             
-        // 最后要把datadir中所有文件改成 mysql:mysql所属 :  
-        chown -R mysql:mysql /var/lib/mysql/*  
-
-
-#### 2-4.　在从结点上 change master ####
-
-        more /mydata/mysqlbackup/2017-01-29_21-03-48/xtrabackup_binlog_info  
-            // 看一下这个目录中的 xtrabackup_binlog_info  
-            // 我这边的结果是 bin.000001	1984  
-            // 这两个数据会派用处  
-
-        启动从结点上的mysql，并进入它的shell  
+            mysql -h localhost -P 3306 -u root -p
+            > grant all privileges on *.* to 'root'@'localhost' identified by 'NewPwd' with grant option;
+                // 若出现报错 ERROR 1820 (HY000): You must SET PASSWORD before executing this statement
+                // 则需要先执行 set password = password('NewPwd');
+                // 再次执行grant命令
+            > grant all privileges on *.* to 'root'@'%'         identified by 'NewPwd' with grant option;
+            > flush privileges;
+            > exit
         
-        change master to master_host = 'ipA',  
-            master_port = 3306,  
-            master_user = 'seven',  
-            master_password = 'xxxxxx',  
-            master_log_file = 'bin.000001',  
-            master_log_pos = 1984;  
+        然后再次用localhost，内网地址，外网地址都连接看看
 
-        start slave;  
-            // 启动slave复制进程  
+
+#### 3. 创建复制用户 ####
+
+        mysql -h localhost -P 3306 -u root -p
+        > create user 'ReplicaUser'@'%' identified by 'xxxxxx';
+        > grant replication slave on *.* to 'ReplicaUser'@'%' identified by 'xxxxxx';
+        > flush privileges;
+        > exit
         
-        show slave status \G  
-            // Slave_IO_Running : Yes  
-            // Slave_SQL_Running: Yes  
-            // 则成功  
+        // 注意
+        // 1. 只需主结点上创建用户
+        // 2. 此处我创建的这个用户，允许从结点来自任何网段，如想限制从结点网段则可以把'%'换掉
+        // 3. 此处我创建的这个用户，允许从结点复制任何库的任何表
+
+
+#### 4. 在主结点上备份数据 ####
+
+        innobackupex \
+        > --defaults-file=/etc/my.cnf \
+        > --host=ipA \
+        > --port=3306 \
+        > --user=root \
+        > --password=xxxxxx \
+        > /mydata/mysqlbackup
+            // 进行一次全备
+            // 1. 备份到 /mydata/mysqlbackup 这个目录下，会产生一个以时间为名的目录
+            // 2. 建议像这样把所有库一起备份，包括 库mysql 和 库performance schema
         
-        set global read_only=1;  
-            // 最后，要在所有从结点上，设置只读  
-            // 注意，也可在配置文件中设置只读，但不推荐那么做；而通过在线命令的方式进行设置，便于进行主从切换  
+        innobackupex \
+        > --defaults-file=/etc/my.cnf \
+        > --host=ipA \
+        > --port=3306 \
+        > --user=root \
+        > --password=xxxxxx \
+        > --apply-log \
+        > /mydata/mysqlbackup/2017-03-16_14-42-01
+            // 对刚才那份全备做事务一致性
+            // 1. 2017-03-16_14-42-01 便是刚才全备生成的目录，需要拷贝到每个从结点
+            // 2. 查看一下全备目录下的 xtrabackup_binlog_info
+            //    记下事务号，比如我的是 02a9ad8e-0984-11e7-963e-00163e00e4e0:1-19
+            //    这个事务号之后会用到
 
----
 
+#### 5. 在从结点上恢复数据 ####
 
-### 三.　主从切换 ###
-
-        我是基于方案二的，也就是说 :
-            1. 主结点和从结点的配置文件中，都开启了log_bin
-            2. 从结点的配置文件中，并没有设置只读，而是通过在线命令的方式设置只读的
-            3. 主结点和从结点上，都创建了用来复制的用户
+        先关闭从结点上的mysql
         
+        把数据目录/var/lib/mysql压缩留一个备份，然后把原数据目录清空
         
-        首先，在原来的主结点上 :
+        innobackupex \
+        > --defaults-file=/etc/my.cnf \
+        > --host=ipB \
+        > --port=3306 \
+        > --user=root \
+        > --password=xxxxxx \
+        > --copy-back /mydata/mysqlbackup/2017-03-16_14-42-01
+        
+        chown -R mysql:mysql /var/lib/mysql
+
+
+#### 6. 在从结点上启动复制 ####
+
+        启动从结点上的mysql，并登入
+        
+        reset master;
+        set global gtid_purged='02a9ad8e-0984-11e7-963e-00163e00e4e0:1-19';
+            // 这是之前记好的事务号
+            // 如果不执行这两条命令，会导致之后　"Slave_SQL_Running: No"
+        
+        change master to master_host='ipA',
+            master_port=3306,
+            master_user='ReplicaUser',
+            master_password='YourPwd',
+            master_auto_position=1;
+        
+        start slave;
+        
+        show slave status \G
+        
+        set global read_only=1;
+            // 别忘了把从结点设为只读
+
+
+#### 7. 主从切换 ####
+
+        在原主结点上 :
             set global read_only=1;
-            show variables like 'read_only';
-                // 把原来的主结点设成只读，这样，在进行主从切换的这段时间里，就不会有新的写操作过来
-                // 改完后，通过show variables确认一下
+                // 原主作为新从，便要只读
             flush logs;
-                // 刷新log_bin
-            show master status \G
-                // 查看主结点状态
+                // 刷新binlog
         
-        
-        然后，在原来的某个从结点上(你要选它做新的主结点) :
-            show slave status \G
-                // 查看原slave状态
-                // 若看到"Slave_SQL_Running_State: Slave has read all relay log"
-                // 　　则说明主从数据完全一致，可以继续下面的操作
-                // 　　否则，你需要等待一会
+        在某原从结点上( 选它做新主 ) :
             stop slave;
-                // 停止原来这个从结点上的slave进程
-            show master status \G
-                // 查看这个新的主结点的master进程的状态，记下结果中的 File 和 Position 字段的值
             set global read_only=0;
-                // 原来这个结点作为从结点时，是只读的，现在它当主结点了，要把只读关掉
+                // 新主是可写的
         
-        
-        然后，在原来的其他从结点上(它们仍然做从结点，但是它们的主变了) :
-            show slave status \G
+        在其他的原从结点上( 仍作为从结点 ) :
             stop slave;
-                // 仍然是看到"Slave has read all relay log"，才可以关掉slave进程
-                // 注意，当所有从结点做完这些操作后，才可以进行下面的操作
         
-        
-        然后，在新主结点之外的其他所有结点上(即 原主 + 原其他从) :
-            change master to master_host = '新主的ip',
-                master_port = 3306,
-                master_user = 'seven',
-                master_password = 'xxxxxx',
-                master_log_file = '刚才要你记下的File的值',
-                master_log_pos = 刚才要你记下的Position的值;
+        在所有的新从结点上 :
+            change master to master_host='新主地址',
+                master_port=3306,
+                master_user='ReplicaUser',
+                master_password='YourPwd',
+                master_auto_position=1;
+                // 相比基于日志点的复制，事务复制在主从切换的时候，不用设置File和Position
             start slave;
-                // 设置它的主是谁，并启动slave进程
             show slave status \G
-                // Slave_IO_Running : Yes　且　Slave_SQL_Running: Yes，则可以

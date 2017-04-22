@@ -156,31 +156,16 @@ comments: true
 
 ### 五.　如何给硬盘添加swap分区 ###
 
-        第一步，建一个普通的分区（主分区or逻辑分区都行）  
-        第二步，修改分区类型的16进制编码  
-        第三步，格式化swap分区  
-        第四步，启用swap分区  
-        
-        比方说，我要把 /dev/sdb7 这个分区做成swap分区  
-        // 保证该分区已经被创建了，而且还没有被挂载  
-        
-        fdisk /dev/sdb  
-            // 输入 t 来修改分区类型  
-            // 输入 7 表示我要对 /dev/sdb7 做修改  
-            // 输入 L 来查看各种分区类型对应的编号  
-            // 输入 82 （82是swap类型的编号）  
-            // 输入 w 来保存  
-        
-        mkswap /dev/sdb7  
-            // 格式化交换分区  
-            // 注意，它和格式化普通分区是有区别的，普通分区的格式化用的是mkfs命令  
-        
-        swapon /dev/sdb7  
-            // 启用这个交换分区  
-            // swapoff可以用来停用  
-        
-        vi /etc/fstab  
-            // 添加 :  
-            // /dev/sdb7    swap    swap    sw    0    0  
-        
-        重启生效  
+        dd if=/dev/zero of=/var/swap bs=1M count=256
+        mkswap /var/swap
+        swapon /var/swap
+            // 以 root 身份，创建swap分区，大小是256M，并挂载在 /var/swap 目录下
+            
+        vi /etc/fstab
+            // 添加一行 /var/swap     swap    swap    defaults    0   0
+            
+        vi /etc/rc.d/rc.local
+            // 将其中的 swapoff -a 注释掉
+            
+        shutdown -r now
+            // 重启，使得swap分区生效

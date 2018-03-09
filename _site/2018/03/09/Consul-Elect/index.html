@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>基于Consul做主备选举</title>
+	<meta name="description" content="有一个数据库的管控系统，设计了如下的异步的任务执行架构 :">
+	
+	<link rel="canonical" href="http://localhost:4000/2018/03/09/Consul-Elect/">
+	<link rel="alternate" type="application/rss+xml" title="Principality Of 340号恒星观测员" href="http://localhost:4000/feed.xml" />
+	
+	<!-- <link rel="stylesheet" href="/css/main.css"> -->
+    
+    <link rel="stylesheet" type="text/css" href="/static/css/bootstrap.min.css">
+    <link rel="stylesheet" type="text/css" href="/static/css/index.css">
+	<script type="text/javascript" src="/static/js/jquery-1.11.1.min.js"></script>
+	<script type="text/javascript" src="/static/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="/static/css/monokai_sublime.min.css">
+	<script type="text/javascript" src="/static/js/highlight.min.js"></script>
+
+    <!--
+    <link rel="stylesheet" type="text/css" href="http://apps.bdimg.com/libs/bootstrap/3.3.0/css/bootstrap.min.css">
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/jquery/2.1.1/jquery.min.js"></script>
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/bootstrap/3.3.0/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="http://apps.bdimg.com/libs/highlight.js/8.4/styles/monokai_sublime.min.css">
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/highlight.js/8.4/highlight.min.js"></script>
+    -->
+    
+	<script type="text/javascript" src="/static/js/index.js"></script>
+	<script>hljs.initHighlightingOnLoad();</script>
+</head>
+
+ <!--  <body data-spy="scroll" data-target="#myAffix"> -->
+  <body>
+
+    <header>
+
+<!-- navbar -->
+  <nav class="navbar navbar-inverse">
+  <div class="container">
+    <!-- Brand and toggle get grouped for better mobile display -->
+    <div class="navbar-header">
+      <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#bs-example-navbar-collapse-1">
+        <span class="sr-only">Toggle navigation</span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+      </button>
+      <a class="navbar-brand" href="/">Principality Of 340号恒星观测员</a>
+      <p class="navbar-text"></p>
+    </div>
+    <!-- Collect the nav links, forms, and other content for toggling -->
+    <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
+      <ul class="nav navbar-nav navbar-right">
+
+        
+          <li>
+        
+        <a href="/">Home</a></li>
+
+        
+          
+            
+              <li>
+            
+            <a href="/projects/"><span class="glyphicon "></span> Projects</a></li>
+          
+        
+          
+            
+              <li>
+            
+            <a href="/about/"><span class="glyphicon "></span> About</a></li>
+          
+        
+          
+        
+          
+        
+      </ul>
+    </div><!-- /.navbar-collapse -->
+  </div><!-- /.container-fluid -->
+</nav>
+
+</header>
+
+    <div id="main" class="container main">
+      <div class="row">
+  <div id="myArticle" class="col-sm-9">
+    <div class="post-area post">
+      <header>
+        <h1>基于Consul做主备选举</h1>
+        <p>Mar 9, 2018</p>
+      </header>
+      <hr>
+      <article>
+        <p>有一个数据库的管控系统，设计了如下的异步的任务执行架构 :</p>
+
+<p><img src="http://localhost:4000/static/img/elect_consul.png" alt="frameA" /></p>
+
+<p>Step1. 管控页面接收用户的操作请求，将请求转发给OSS。</p>
+
+<p>Step2. OSS将任务以键值对的方式写入consul，然后返回。</p>
+
+<p>Step3. 有若干个消费者进程，基于consul做主备选举，主消费者从consul的固定目录下拉取任务执行。</p>
+
+<h3 id="section">一. 首先来讨论几个问题</h3>
+
+<p>P1. OSS 往 consul 写入键值对的时候，是否需要加锁 ?</p>
+
+<div class="language-text highlighter-rouge"><pre class="highlight"><code>不需要，直接新增键值对就行 :
+curl -X PUT http://172.16.4.10:8500/v1/kv/oracleTask/task_${id} -d '${value}'
+
+${id}    是一个随机字符串，由生产者填写，确保全局唯一就行
+${value} 形如 {
+    "taskId"    : "1",                 // 任务ID
+    "taskTime"  : "1445599887",        // 任务时间戳
+    "taskTaken" : "false",             // 表示该任务是否被领取
+    "taskType"  : "CreateTableSpace",  // 任务类型
+    "taskPara"  : {                    // 任务参数
+        "instanceId" : "xxx",
+        "initSize"   : "8000",
+        "maxSize"    : "100000",
+        "stepSize"   : "2000"
+    }
+}
+</code></pre>
+</div>
+
+<p>P2. 若存在多个消费者，如何保证一个任务不会被重复消费 ?</p>
+
+<div class="language-text highlighter-rouge"><pre class="highlight"><code>使用consul的乐观锁机制 :
+curl -X PUT http://172.16.4.10:8500/v1/kv/oracleTask/task_${id}?cas=${原modifyIndex} -d {"taskTaken":true}
+   
+若返回 false，则表示该任务已经被其他消费者领走了。
+若返回 true ，则表示当前消费者领取该任务成功，且taskTaken会被置为true。
+</code></pre>
+</div>
+
+<p>P3. 如何让任务按照顺序被依次消费 ?</p>
+
+<div class="language-text highlighter-rouge"><pre class="highlight"><code>消费者取出 oracleTask 目录下的任务后，过滤出 taskTaken = false 的任务，再按照 taskTime 升序排序，依次尝试对各任务加锁（尝试领走）。
+
+同时只能有一个消费者在执行任务，这样就需要基于consul做主备选举，consul 的 acquire/release 可以做到。
+</code></pre>
+</div>
+
+<h3 id="demo">二. 消费者的demo</h3>
+
+<div class="language-python highlighter-rouge"><pre class="highlight"><code><span class="c"># -*- coding: utf-8 -*-</span>
+
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">import</span> <span class="nn">random</span>
+<span class="kn">import</span> <span class="nn">base64</span>
+<span class="kn">import</span> <span class="nn">urllib2</span>
+
+<span class="c"># ------------------------------</span>
+<span class="c"># constant variables</span>
+
+<span class="n">CONSUL_HOST</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">popen</span><span class="p">(</span><span class="s">"/usr/sbin/ifconfig eth0 | grep inet | sed 's/^[ </span><span class="se">\t</span><span class="s">]*//g' | cut -d ' ' -f 2"</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s">"</span><span class="se">\r\n</span><span class="s">"</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s">"</span><span class="se">\n</span><span class="s">"</span><span class="p">)</span>
+<span class="n">CONSUL_PORT</span> <span class="o">=</span> <span class="mi">8500</span>
+<span class="n">CONSUL_KEYPREFIX</span> <span class="o">=</span> <span class="s">"oracleTask/"</span>
+
+<span class="n">CONSUL_LEADER_KEY</span> <span class="o">=</span> <span class="s">"consumerLeader"</span>
+<span class="n">CONSUL_LEADER_VALUE</span> <span class="o">=</span> <span class="s">"kv for consumer leader election"</span>
+
+<span class="n">CONSUL_SESSION_LOCKDELAY</span> <span class="o">=</span> <span class="s">"120s"</span>
+<span class="n">CONSUL_SESSION_TTL</span> <span class="o">=</span> <span class="s">"120s"</span>            <span class="c"># 要求此值必须大于一个任务的执行时间</span>
+<span class="n">CONSUL_SESSION_NAME</span> <span class="o">=</span> <span class="s">"consumer-lock"</span>
+<span class="n">CONSUL_SESSION_Behavior</span> <span class="o">=</span> <span class="s">"release"</span>
+
+<span class="n">CONSUL_CONSUMER_SLEEP</span> <span class="o">=</span> <span class="mi">3</span>
+
+<span class="c"># ------------------------------</span>
+<span class="c"># tool functions ( 关于领取任务 )</span>
+
+<span class="k">def</span> <span class="nf">sendHttpRequest</span><span class="p">(</span><span class="n">method</span><span class="p">,</span> <span class="n">url</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+    <span class="s">""" 发送HTTP请求 """</span>
+    <span class="n">req</span> <span class="o">=</span> <span class="n">urllib2</span><span class="o">.</span><span class="n">Request</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
+    <span class="n">req</span><span class="o">.</span><span class="n">get_method</span> <span class="o">=</span> <span class="k">lambda</span> <span class="p">:</span> <span class="n">method</span>
+    <span class="n">req</span><span class="o">.</span><span class="n">add_header</span><span class="p">(</span><span class="s">"Content-Type"</span><span class="p">,</span> <span class="s">"application/json; charset=utf-8"</span><span class="p">)</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="n">urllib2</span><span class="o">.</span><span class="n">urlopen</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">res</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+
+<span class="k">def</span> <span class="nf">getTaskList</span><span class="p">():</span>
+    <span class="s">""" 获取所有未被领走的oracle任务 """</span>
+    <span class="n">reqMethod</span> <span class="o">=</span> <span class="s">"GET"</span>
+    <span class="n">reqUrl</span>    <span class="o">=</span> <span class="s">"http://</span><span class="si">%</span><span class="s">s:</span><span class="si">%</span><span class="s">d/v1/kv/</span><span class="si">%</span><span class="s">s?recurse"</span> <span class="o">%</span> <span class="p">(</span><span class="n">CONSUL_HOST</span><span class="p">,</span> <span class="n">CONSUL_PORT</span><span class="p">,</span> <span class="n">CONSUL_KEYPREFIX</span><span class="p">)</span>
+    <span class="n">rspData</span>   <span class="o">=</span> <span class="n">sendHttpRequest</span><span class="p">(</span><span class="n">reqMethod</span><span class="p">,</span> <span class="n">reqUrl</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+    <span class="n">rspData</span>   <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">rspData</span><span class="p">)</span>
+
+    <span class="n">taskList</span>  <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">rspData</span><span class="p">)</span>
+    <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">:</span>
+        <span class="k">if</span>  <span class="n">rspData</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="s">"Value"</span><span class="p">]</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">rspData</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="s">"Value"</span><span class="p">]</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">base64</span><span class="o">.</span><span class="n">b64decode</span><span class="p">(</span><span class="n">rspData</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="s">"Value"</span><span class="p">]))</span>
+            <span class="k">if</span> <span class="n">rspData</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="s">"Value"</span><span class="p">][</span><span class="s">"taskTaken"</span><span class="p">]</span> <span class="ow">is</span> <span class="bp">False</span><span class="p">:</span>
+                <span class="n">taskList</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">rspData</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+        <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+    
+    <span class="n">taskList</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="nb">cmp</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">lhs</span><span class="p">,</span> <span class="n">rhs</span> <span class="p">:</span> <span class="n">lhs</span><span class="p">[</span><span class="s">"Value"</span><span class="p">][</span><span class="s">"taskTime"</span><span class="p">]</span> <span class="o">-</span> <span class="n">rhs</span><span class="p">[</span><span class="s">"Value"</span><span class="p">][</span><span class="s">"taskTime"</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">taskList</span>
+
+<span class="k">def</span> <span class="nf">tryTakeTask</span><span class="p">(</span><span class="n">kvValue</span><span class="p">):</span>
+    <span class="s">""" 尝试领走一个任务, 返回true成功, false失败 """</span>
+    <span class="n">reqMethod</span> <span class="o">=</span> <span class="s">"PUT"</span>
+    <span class="n">reqUrl</span>    <span class="o">=</span> <span class="s">"http://</span><span class="si">%</span><span class="s">s:</span><span class="si">%</span><span class="s">d/v1/kv/</span><span class="si">%</span><span class="s">s?cas=</span><span class="si">%</span><span class="s">d"</span> <span class="o">%</span> <span class="p">(</span><span class="n">CONSUL_HOST</span><span class="p">,</span> <span class="n">CONSUL_PORT</span><span class="p">,</span> <span class="n">kvValue</span><span class="p">[</span><span class="s">"Key"</span><span class="p">],</span> <span class="n">kvValue</span><span class="p">[</span><span class="s">"ModifyIndex"</span><span class="p">])</span>
+    <span class="n">reqData</span>   <span class="o">=</span> <span class="n">kvValue</span><span class="p">[</span><span class="s">"Value"</span><span class="p">]</span>
+    <span class="n">reqData</span><span class="p">[</span><span class="s">"taskTaken"</span><span class="p">]</span> <span class="o">=</span> <span class="bp">True</span>
+    <span class="n">reqData</span>   <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">reqData</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">"utf-8"</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">sendHttpRequest</span><span class="p">(</span><span class="n">reqMethod</span><span class="p">,</span> <span class="n">reqUrl</span><span class="p">,</span> <span class="n">reqData</span><span class="p">)</span> <span class="o">==</span> <span class="s">"true"</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">True</span>
+    <span class="k">return</span> <span class="bp">False</span>
+
+<span class="k">def</span> <span class="nf">deleteTask</span><span class="p">(</span><span class="n">key</span><span class="p">):</span>
+    <span class="s">""" 删除一个做完的任务 """</span>
+    <span class="n">reqMethod</span> <span class="o">=</span> <span class="s">"DELETE"</span>
+    <span class="n">reqUrl</span>    <span class="o">=</span> <span class="s">"http://</span><span class="si">%</span><span class="s">s:</span><span class="si">%</span><span class="s">d/v1/kv/</span><span class="si">%</span><span class="s">s"</span> <span class="o">%</span> <span class="p">(</span><span class="n">CONSUL_HOST</span><span class="p">,</span> <span class="n">CONSUL_PORT</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
+    <span class="n">sendHttpRequest</span><span class="p">(</span><span class="n">reqMethod</span><span class="p">,</span> <span class="n">reqUrl</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+
+<span class="c"># ------------------------------</span>
+<span class="c"># tool functions ( 关于主备选举 )</span>
+
+<span class="k">def</span> <span class="nf">ensureElectKvExist</span><span class="p">():</span>
+    <span class="s">""" 保证用作consumer选举的键值对存在 """</span>
+    <span class="n">reqUrl</span> <span class="o">=</span> <span class="s">"http://</span><span class="si">%</span><span class="s">s:</span><span class="si">%</span><span class="s">d/v1/kv/</span><span class="si">%</span><span class="s">s"</span> <span class="o">%</span> <span class="p">(</span><span class="n">CONSUL_HOST</span><span class="p">,</span> <span class="n">CONSUL_PORT</span><span class="p">,</span> <span class="n">CONSUL_LEADER_KEY</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">sendHttpRequest</span><span class="p">(</span><span class="s">"GET"</span><span class="p">,</span> <span class="n">reqUrl</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+    <span class="k">except</span> <span class="n">urllib2</span><span class="o">.</span><span class="n">HTTPError</span> <span class="k">as</span> <span class="n">err</span><span class="p">:</span>
+        <span class="n">sendHttpRequest</span><span class="p">(</span><span class="s">"PUT"</span><span class="p">,</span> <span class="n">reqUrl</span><span class="p">,</span> <span class="n">CONSUL_LEADER_VALUE</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">getNodeList</span><span class="p">():</span>
+    <span class="s">""" 获取node列表 """</span>
+    <span class="n">rsp</span> <span class="o">=</span> <span class="n">sendHttpRequest</span><span class="p">(</span><span class="s">"GET"</span><span class="p">,</span> <span class="s">"http://</span><span class="si">%</span><span class="s">s:</span><span class="si">%</span><span class="s">d/v1/catalog/nodes"</span> <span class="o">%</span> <span class="p">(</span><span class="n">CONSUL_HOST</span><span class="p">,</span> <span class="n">CONSUL_PORT</span><span class="p">),</span> <span class="bp">None</span><span class="p">)</span>
+    <span class="n">rsp</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">rsp</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">rsp</span>
+
+<span class="k">def</span> <span class="nf">createSession</span><span class="p">():</span>
+    <span class="s">""" 创建 session """</span>
+    <span class="n">nodeList</span>  <span class="o">=</span> <span class="n">getNodeList</span><span class="p">()</span>
+    <span class="n">reqMethod</span> <span class="o">=</span> <span class="s">"PUT"</span>
+    <span class="n">reqUrl</span>    <span class="o">=</span> <span class="s">"http://</span><span class="si">%</span><span class="s">s:</span><span class="si">%</span><span class="s">d/v1/session/create"</span> <span class="o">%</span> <span class="p">(</span><span class="n">CONSUL_HOST</span><span class="p">,</span> <span class="n">CONSUL_PORT</span><span class="p">)</span>
+    <span class="n">reqData</span>   <span class="o">=</span> <span class="p">{</span>
+        <span class="s">"Node"</span>      <span class="p">:</span> <span class="n">nodeList</span><span class="p">[</span><span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">nodeList</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)][</span><span class="s">"Node"</span><span class="p">],</span>
+        <span class="s">"Name"</span>      <span class="p">:</span> <span class="n">CONSUL_SESSION_NAME</span><span class="p">,</span>
+        <span class="s">"Behavior"</span>  <span class="p">:</span> <span class="n">CONSUL_SESSION_Behavior</span><span class="p">,</span>
+        <span class="s">"TTL"</span>       <span class="p">:</span> <span class="n">CONSUL_SESSION_TTL</span><span class="p">,</span>
+        <span class="s">"LockDelay"</span> <span class="p">:</span> <span class="n">CONSUL_SESSION_LOCKDELAY</span>
+    <span class="p">}</span>
+    <span class="n">reqData</span>   <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">reqData</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">"utf-8"</span><span class="p">)</span>
+    <span class="n">response</span>  <span class="o">=</span> <span class="n">sendHttpRequest</span><span class="p">(</span><span class="n">reqMethod</span><span class="p">,</span> <span class="n">reqUrl</span><span class="p">,</span> <span class="n">reqData</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">response</span><span class="p">)[</span><span class="s">"ID"</span><span class="p">]</span>
+
+<span class="k">def</span> <span class="nf">deleteSession</span><span class="p">(</span><span class="n">sessionId</span><span class="p">):</span>
+    <span class="s">""" 销毁session """</span>
+    <span class="n">reqMethod</span> <span class="o">=</span> <span class="s">"PUT"</span>
+    <span class="n">reqUrl</span>    <span class="o">=</span> <span class="s">"http://</span><span class="si">%</span><span class="s">s:</span><span class="si">%</span><span class="s">d/v1/session/destroy/</span><span class="si">%</span><span class="s">s"</span> <span class="o">%</span> <span class="p">(</span><span class="n">CONSUL_HOST</span><span class="p">,</span> <span class="n">CONSUL_PORT</span><span class="p">,</span> <span class="n">sessionId</span><span class="p">)</span>
+    <span class="n">sendHttpRequest</span><span class="p">(</span><span class="n">reqMethod</span><span class="p">,</span> <span class="n">reqUrl</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">renewSession</span><span class="p">(</span><span class="n">sessionId</span><span class="p">):</span>
+    <span class="s">""" renew session 以防止session过期 """</span>
+    <span class="n">reqMethod</span> <span class="o">=</span> <span class="s">"PUT"</span>
+    <span class="n">reqUrl</span>    <span class="o">=</span> <span class="s">"http://</span><span class="si">%</span><span class="s">s:</span><span class="si">%</span><span class="s">d/v1/session/renew/</span><span class="si">%</span><span class="s">s"</span> <span class="o">%</span> <span class="p">(</span><span class="n">CONSUL_HOST</span><span class="p">,</span> <span class="n">CONSUL_PORT</span><span class="p">,</span> <span class="n">sessionId</span><span class="p">)</span>
+    <span class="n">sendHttpRequest</span><span class="p">(</span><span class="n">reqMethod</span><span class="p">,</span> <span class="n">reqUrl</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">tryLock</span><span class="p">(</span><span class="n">sessionId</span><span class="p">):</span>
+    <span class="s">""" 尝试抢锁, 返回true成功, false失败 """</span>
+    <span class="n">reqMethod</span> <span class="o">=</span> <span class="s">"PUT"</span>
+    <span class="n">reqUrl</span>    <span class="o">=</span> <span class="s">"http://</span><span class="si">%</span><span class="s">s:</span><span class="si">%</span><span class="s">d/v1/kv/</span><span class="si">%</span><span class="s">s?acquire=</span><span class="si">%</span><span class="s">s"</span> <span class="o">%</span> <span class="p">(</span><span class="n">CONSUL_HOST</span><span class="p">,</span> <span class="n">CONSUL_PORT</span><span class="p">,</span> <span class="n">CONSUL_LEADER_KEY</span><span class="p">,</span> <span class="n">sessionId</span><span class="p">)</span>
+    <span class="n">rspData</span>   <span class="o">=</span> <span class="n">sendHttpRequest</span><span class="p">(</span><span class="n">reqMethod</span><span class="p">,</span> <span class="n">reqUrl</span><span class="p">,</span> <span class="n">CONSUL_LEADER_VALUE</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">rspData</span> <span class="o">==</span> <span class="s">"true"</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">True</span>
+    <span class="k">return</span> <span class="bp">False</span>
+
+<span class="k">def</span> <span class="nf">tryRelease</span><span class="p">(</span><span class="n">sessionId</span><span class="p">):</span>
+    <span class="s">""" 尝试解锁, 返回true成功, false失败 """</span>
+    <span class="n">reqMethod</span> <span class="o">=</span> <span class="s">"PUT"</span>
+    <span class="n">reqUrl</span>    <span class="o">=</span> <span class="s">"http://</span><span class="si">%</span><span class="s">s:</span><span class="si">%</span><span class="s">d/v1/kv/</span><span class="si">%</span><span class="s">s?release=</span><span class="si">%</span><span class="s">s"</span> <span class="o">%</span> <span class="p">(</span><span class="n">CONSUL_HOST</span><span class="p">,</span> <span class="n">CONSUL_PORT</span><span class="p">,</span> <span class="n">CONSUL_LEADER_KEY</span><span class="p">,</span> <span class="n">sessionId</span><span class="p">)</span>
+    <span class="n">rspData</span>   <span class="o">=</span> <span class="n">sendHttpRequest</span><span class="p">(</span><span class="n">reqMethod</span><span class="p">,</span> <span class="n">reqUrl</span><span class="p">,</span> <span class="n">CONSUL_LEADER_VALUE</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">rspData</span> <span class="o">==</span> <span class="s">"true"</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">True</span>
+    <span class="k">return</span> <span class="bp">False</span>
+
+<span class="k">def</span> <span class="nf">whoIsLeader</span><span class="p">():</span>
+    <span class="s">""" 当前主节点的sessionId """</span>
+    <span class="n">reqMethod</span> <span class="o">=</span> <span class="s">"GET"</span>
+    <span class="n">reqUrl</span>    <span class="o">=</span> <span class="s">"http://</span><span class="si">%</span><span class="s">s:</span><span class="si">%</span><span class="s">d/v1/kv/</span><span class="si">%</span><span class="s">s"</span> <span class="o">%</span> <span class="p">(</span><span class="n">CONSUL_HOST</span><span class="p">,</span> <span class="n">CONSUL_PORT</span><span class="p">,</span> <span class="n">CONSUL_LEADER_KEY</span><span class="p">)</span>
+    <span class="n">rspData</span>   <span class="o">=</span> <span class="n">sendHttpRequest</span><span class="p">(</span><span class="n">reqMethod</span><span class="p">,</span> <span class="n">reqUrl</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+    <span class="n">rspData</span>   <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">rspData</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">rspData</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">0</span> <span class="ow">and</span> <span class="s">"Session"</span> <span class="ow">in</span> <span class="n">rspData</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="n">rspData</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s">"Session"</span><span class="p">]</span>
+    <span class="k">return</span> <span class="bp">None</span>
+
+<span class="c"># ------------------------------</span>
+<span class="c"># 主流程 :</span>
+
+<span class="k">def</span> <span class="nf">execJob</span><span class="p">(</span><span class="n">taskDetail</span><span class="p">):</span>
+    <span class="s">"""
+    您可以重写该函数, 以实现您的任务执行逻辑
+    返回true表示成功, false失败
+    """</span>
+    <span class="k">print</span> <span class="s">"start  execute a task"</span>
+    <span class="k">print</span> <span class="s">"task detail is : "</span> <span class="o">+</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">taskDetail</span><span class="p">)</span>
+    <span class="k">print</span> <span class="s">"finish execute a task"</span>
+    <span class="k">return</span> <span class="bp">True</span>
+
+<span class="k">def</span> <span class="nf">mainProcess</span><span class="p">():</span>
+    <span class="c"># 确保主备选举的键值对存在</span>
+    <span class="n">ensureElectKvExist</span><span class="p">()</span>
+
+    <span class="c"># 声明 session id</span>
+    <span class="n">session_id</span> <span class="o">=</span> <span class="bp">None</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+            <span class="k">print</span> <span class="s">"=================================================="</span>
+
+            <span class="c"># 当前谁是主消费者</span>
+            <span class="n">leader</span> <span class="o">=</span> <span class="n">whoIsLeader</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">leader</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+                <span class="k">print</span> <span class="s">"no one is leader, may be in election"</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">print</span> <span class="s">"leader is : "</span> <span class="o">+</span> <span class="n">leader</span>
+        
+            <span class="c"># 创建session</span>
+            <span class="n">session_id</span> <span class="o">=</span> <span class="n">createSession</span><span class="p">()</span>
+
+            <span class="k">if</span> <span class="n">tryLock</span><span class="p">(</span><span class="n">session_id</span><span class="p">):</span>
+                <span class="k">print</span> <span class="s">"I am the leader"</span>
+
+                <span class="c"># 主消费者不断地工作</span>
+                <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+                    <span class="c"># 1. 取出所有未被领走的任务</span>
+                    <span class="n">task_list</span> <span class="o">=</span> <span class="n">getTaskList</span><span class="p">()</span>
+
+                    <span class="c"># 2. 依次尝试各任务</span>
+                    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">task_list</span><span class="p">)</span>
+                    <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
+                    <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="n">tryTakeTask</span><span class="p">(</span><span class="n">task_list</span><span class="p">[</span><span class="n">i</span><span class="p">]):</span>
+                            <span class="k">print</span> <span class="s">"take task success : "</span> <span class="o">+</span> <span class="n">task_list</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="s">"Key"</span><span class="p">]</span>
+
+                            <span class="k">if</span> <span class="n">execJob</span><span class="p">(</span><span class="n">task_list</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="s">"Value"</span><span class="p">]):</span>
+                                <span class="c"># 执行任务成功, 可选删除任务或将其移动至另外一个目录中</span>
+                                <span class="k">print</span> <span class="s">"exec task success : "</span> <span class="o">+</span> <span class="n">task_list</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="s">"Key"</span><span class="p">]</span>
+                                <span class="n">deleteTask</span><span class="p">(</span><span class="n">task_list</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="s">"Key"</span><span class="p">])</span>
+                            <span class="k">else</span><span class="p">:</span>
+                                <span class="c"># 执行任务失败, 可选回写一些信息</span>
+                                <span class="k">print</span> <span class="s">"exec task failed  : "</span> <span class="o">+</span> <span class="n">task_list</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="s">"Key"</span><span class="p">]</span>
+                        <span class="k">else</span><span class="p">:</span>
+                            <span class="k">print</span> <span class="s">"take task failed  : "</span> <span class="o">+</span> <span class="n">task_list</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="s">"Key"</span><span class="p">]</span>
+                        
+                        <span class="n">renewSession</span><span class="p">(</span><span class="n">session_id</span><span class="p">)</span>
+                        <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+                        <span class="k">print</span> <span class="s">""</span>
+                    
+                    <span class="c"># 3. 续签 session</span>
+                    <span class="n">renewSession</span><span class="p">(</span><span class="n">session_id</span><span class="p">)</span>
+
+                    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">CONSUL_CONSUMER_SLEEP</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">print</span> <span class="s">"I am not the leader"</span>
+
+            <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">CONSUL_CONSUMER_SLEEP</span><span class="p">)</span>
+    <span class="k">except</span><span class="p">:</span>
+        <span class="c"># 退出时, 要解锁并销毁session, 以让其他备结点成为主节点</span>
+        <span class="k">if</span> <span class="n">session_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">tryRelease</span><span class="p">(</span><span class="n">session_id</span><span class="p">)</span>
+            <span class="n">deleteSession</span><span class="p">(</span><span class="n">session_id</span><span class="p">)</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="k">print</span> <span class="s">"bye ~"</span>
+
+<span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">"__main__"</span><span class="p">:</span>
+    <span class="n">mainProcess</span><span class="p">()</span>
+</code></pre>
+</div>
+
+<h3 id="section-1">三. 遗留问题</h3>
+
+<p>问题一. 由于consul采用的是gossip协议，故OSS连接consul的时候，是请求consul集群中的任何一个结点，但万一请求的那个结点挂了呢 ?</p>
+
+<p>问题二. consul的会话是有过期时间的，尽管可以不断地续签会话，以保持会话有效，从而让其他备消费者无法也成为主消费者。但是若是一个任务的执行时间，已经超过了会话的有效期，那么当它还没来得及续签的时候，其他备消费者中的一个，也可以成为主消费者。这样的话，就会导致有多个主消费者领取任务（虽然领取任务是互斥的，可以保证多个主消费者不会领取到同一个任务，但是若任务之间可能存在冲突，则多消费者就有问题了）</p>
+
+<p>问题三. consul的watch机制，是consul去拉起一个进程，每当有新的任务，就会创建一个新的进程，这样开销太大。而让消费者主动去拉取任务，性能也是不高的。</p>
+
+<h3 id="section-2">四. 合理的架构</h3>
+
+<p><img src="http://localhost:4000/static/img/elect_zk.png" alt="frameB" /></p>
+
+<p>Step1. 多个MQ组成集群，通过HAproxy提供一个vip。（解决上述的问题一）。</p>
+
+<p>Step2. OSS通过HAproxy提供的vip，将任务写入MQ。</p>
+
+<p>Step3. 若干个消费者，基于zookeeper做主备选举（可靠），主消费者将会与MQ建立连接。（解决上述的问题二）。</p>
+
+<p>Step4. MQ收到任务后，主动推给与之建立连接的主消费者。（解决上述的问题三）。</p>
+
+      </article>
+      <hr>
+        <div class="bdsharebuttonbox">
+            <a href="#" class="bds_more" data-cmd="more"></a>
+            <a href="#" class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+            <a href="#" class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+            <a href="#" class="bds_douban" data-cmd="douban" title="分享到豆瓣网"></a>
+            <a href="#" class="bds_fbook" data-cmd="fbook" title="分享到Facebook"></a>
+            <a href="#" class="bds_copy" data-cmd="copy" title="分享到复制网址"></a>
+        </div>
+        <script>
+            window._bd_share_config={"common":{"bdSnsKey":{},"bdText":"","bdMini":"2","bdMiniList":false,"bdPic":"","bdStyle":"1","bdSize":"24"},"share":{}};with(document)0[(getElementsByTagName('head')[0]||body).appendChild(createElement('script')).src='http://bdimg.share.baidu.com/static/api/js/share.js?v=89860593.js?cdnversion='+~(-new Date()/36e5)];
+        </script>
+    </div>
+	
+    <!-- duoshuo.com javascript include code. -->    
+    
+    <!-- disqus.com javascript include code. -->
+	
+    <div class="post-area post comment">
+        <div id="disqus_thread"></div>
+    </div>
+	<script>
+		var disqus_config = function () {
+			this.page.url = "http://340StarObserver.github.io/2018/03/09/Consul-Elect/"; 
+			this.page.identifier = "/2018/03/09/Consul-Elect"; 
+		};
+		(function() {
+			var d = document, s = d.createElement('script');
+			s.src = '/static/js/embed.js';
+			s.setAttribute('data-timestamp', +new Date());
+			(d.head || d.body).appendChild(s);
+		})();
+	</script>
+	
+    
+  </div>
+  
+  <div id="content" class="col-sm-3">
+    <!-- <div id="myAffix" class="shadow-bottom-center hidden-xs" data-spy="affix" data-offset-top="0" data-offset-bottom="-20"> -->
+    <div id="myAffix" class="shadow-bottom-center hidden-xs" >
+      <div class="categories-list-header">
+        Content
+      </div>
+      <div class="content-text"></div>
+    </div>
+  </div>
+  
+</div>
+    </div>
+
+    
+    <div id="top" data-toggle="tooltip" data-placement="left" title="back to top">
+      <a href="javascript:;">
+        <div class="arrow"></div>
+        <div class="stick"></div>
+      </a>
+    </div>
+
+    <footer class="">
+  <div class="container">
+    <div class="row">
+      <div class="col-md-12">
+        <a href="mailto:lvyang@ippclub.org"><span class="glyphicon glyphicon-envelope"></span> lvyang@ippclub.org</a>
+        <span class="point"> · </span>
+        
+          <a href="https://github.com/340StarObserver">
+            <span class="icon">
+              <svg viewBox="0 0 16 16">
+                <path fill="#aaa" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+              </svg>
+            </span>
+            Github
+            <!-- <span>340StarObserver</span> -->
+          </a>
+          
+          <span class="point"> · </span>
+          <span><a href="https://github.com/340StarObserver/340StarObserver.github.io/_posts/Distributed/2018-03-08-Consul-Elect.md">View source</a></span>
+          <span class="point"> · </span>
+          <span><a class="newpost" href="javascript:;">New post</a></span>
+		  <span class="point"> · </span>
+          <span><a href="/feed.xml">RSS</a></span>
+          <span class="point"> · </span>
+          <span>&copy; 2016 340号恒星观测员</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+    <script type="text/javascript">
+    function OnClickNewPost()
+    {
+        var title = prompt("Please enter title of your post");
+        if (title!=null){
+            title = title.replace(" ", "-");
+            var currentdate = new Date();
+            var urlNewPage = "https://github.com/340StarObserver/340StarObserver.github.io/?filename=_posts/" 
+                + currentdate.getFullYear() + "-" + (currentdate.getMonth()+1) + "-" + currentdate.getDate() + "-" + title + ".md";
+                
+            var defaultText =  [
+                '---',
+                'layout: post',
+                'comments: true',
+                'categories: diary',
+                '---',
+                '## Title',
+                'text'
+                ].join('\n');
+            urlNewPage += "&value=" + encodeURIComponent(defaultText);
+            window.open(urlNewPage);
+        }
+    }
+    
+    $(function() {
+      // CreateNewPostLinks
+      $('.newpost').each(function(){
+          $(this).click(OnClickNewPost);
+      });
+    });
+</script>
+  
+  </body>
+</html>

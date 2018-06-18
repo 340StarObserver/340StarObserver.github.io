@@ -22,6 +22,8 @@ comments: true
 
 下面重点论述第三步～第六步的具体实现。
 
+<br>
+
 ### 环境信息 ###
 
 ```text
@@ -53,6 +55,8 @@ rs   : 192.168.231.58:80, 192.168.245.34:80, 192.168.245.57:80
 // web.tdsql是内部一个数据库的管理端页面的服务。
 ```
 
+<br>
+
 ### 第三步的实现 ###
 
 先来看看iptables截获数据包之前，数据包原本应该发给哪个进程？
@@ -79,6 +83,8 @@ tcp6       0      0 :::8081                 :::*                    LISTEN      
 
 **这个hyperkube进程什么用？**　因为不管是Pod的ip，还是Service的vip，都是容器网络下的地址。而k8s集群外面的前置nginx无法直接访问k8s的容器网络，只能访问物理网络，这个hyperkube进程充当了容器网络和物理网络的桥梁，提供在物理网络下能够让前置nginx访问的方式。
 
+<br>
+
 **下面来看iptables是如何截获母机80端口的数据包，并dnat到nginx.ingress的各Pod上的？**
 
 ```shell
@@ -94,6 +100,8 @@ tcp6       0      0 :::8081                 :::*                    LISTEN      
 KUBE-MARK-MASQ是用来给数据包打上标记的，凡是打了标记的数据包，都会被做snat，即把源地址改写为母机的本机地址，以避免三角流量的产生。
 
 **剩下 KUBE-SVC-ILTDUQYRTBDG2DYW 这条链，也就是说，数据包到了这条链上。**
+
+<br>
 
 ```shell
 [root@node1 ~]# iptables -S -t nat | grep KUBE-SVC-ILTDUQYRTBDG2DYW
@@ -111,6 +119,8 @@ KUBE-MARK-MASQ是用来给数据包打上标记的，凡是打了标记的数据
 如上所示，**到达 KUBE-SVC-ILTDUQYRTBDG2DYW 这条链的数据包，会按照百分比转发到三条链上。**33%可能性会被转到 KUBE-SEP-DMJPT5NIA7G72QSV 链，50%可能性会被转到 KUBE-SEP-PQFXUY3XRL2SFBRY 链，17%可能性背会转到 KUBE-SEP-BAVC27VMIGG6TXQV 链。
 
 咦，这儿按照百分比进行转发，已经和 "dnat到各Pod上" 有点像了呀。接着看这三条链的细节。
+
+<br>
 
 ```shell
 [root@node1 ~]# iptables -S -t nat | grep KUBE-SEP-DMJPT5NIA7G72QSV
@@ -147,10 +157,14 @@ KUBE-MARK-MASQ是用来给数据包打上标记的，凡是打了标记的数据
 
 **如此，数据包就被分发到nginx.ingress的三个Pod上了。**
 
+<br>
+
 到此，你可能会有个疑问，**分摊到三个Pod的时候，为何不是均匀分摊**，即百分比为啥不同？
 - 启动第一个Pod的时候，Pod1的百分比是100%。
 - 启动第二个Pod的时候，平均百分比是50%，从当前百分比超过50%的Pod中，挑选一个，划出50%给新的Pod。这样，Pod1的百分比是50%，Pod2的百分比也是50%。
 - 启动第三个Pod的时候，平均百分比是33%，同理，从当前百分比超过33%的Pod中，挑选一个，划出33%给新的Pod。这样，原来的两个Pod中，有一个仍然是50%，有一个只剩下17%，而新的那个是33%。
+
+<br>
 
 ### 第四步的实现 ###
 
@@ -198,6 +212,8 @@ server {
 
 如上所示，请求的域名 web.tdsql.pr.fsphere.cn 匹配到该配置文件中的规则，请求被进一步，以proxy_pass的方式，转发到 http://web.tdsql 上。
 
+<br>
+
 ### 第五步的实现 ###
 
 k8s集群内部，如何将 web.tdsql 这个域名，解析到某个地址上？
@@ -240,6 +256,8 @@ Events:         <none>
 
 如上所示，192.168.192.3 其实是 kube-system 这个名字空间下的 kube-dns 这个Service的vip。kube-dns是k8s自带的，用以实现服务发现。
 
+<br>
+
 ### 第六步的实现 ###
 
 现在，数据包到达 web.tdsql 这个 Service了，最后如何以 kube-proxy 的方式，分摊到 web.tdsql 的各Pod呢？
@@ -254,6 +272,8 @@ Events:         <none>
 
 如上所示，**请求 192.168.192.64:80 的数据包，匹配到规则，将会到达 KUBE-SVC-BJMJPDVPPZKAQKK7 这条链。**
 
+<br>
+
 接下来，和前面 <第四步的实现> 小节中的，就是一个道理了。即看 KUBE-SVC-BJMJPDVPPZKAQKK7 这条链的具体规则：
 
 ```shell
@@ -266,6 +286,8 @@ Events:         <none>
 ```
 
 如上所示，**到达 KUBE-SVC-BJMJPDVPPZKAQKK7 链的数据包，按照 33%、50%、17%的比例，分别转到 KUBE-SEP-GVR3A2XHGAQS7LDR、KUBE-SEP-RY5WDFQPQ3P6KIT5、KUBE-SEP-ANYCT6LXRLLWZRMQ 这三条链上。**
+
+<br>
 
 ```shell
 [root@node1 ~]# iptables -S -t nat | grep KUBE-SEP-GVR3A2XHGAQS7LDR

@@ -97,9 +97,33 @@ tcp6       0      0 :::8081                 :::*                    LISTEN      
 
 如上所示，母机80端口的数据包，首先匹配到上述规则，采取的操作是 KUBE-MARK-MASQ 和 KUBE-SVC-ILTDUQYRTBDG2DYW。我们知道，iptables -j 后面跟的可以是 ACCEPT、DROP、REJECT。这里的两个KUBE开头的字符串，明显是扩展的。
 
-KUBE-MARK-MASQ是用来给数据包打上标记的，凡是打了标记的数据包，都会被做snat，即把源地址改写为母机的本机地址，以避免三角流量的产生。
+<br>
 
-**剩下 KUBE-SVC-ILTDUQYRTBDG2DYW 这条链，也就是说，数据包到了这条链上。**
+**按照顺序，我们先来看下 KUBE-MARK-MASQ 这条链的作用？**
+
+```shell
+[root@node1 ~]# iptables -S -t nat | grep KUBE-MARK-MASQ
+-N KUBE-MARK-MASQ
+-A KUBE-MARK-MASQ -j MARK --set-xmark 0x4000/0x4000
+...
+...
+```
+
+如上所示， KUBE-MARK-MASQ 是用来给数据包打上标记的（标记值为 0x4000/0x4000），那么这个标记又有啥用呢？此时，我们按照这个标记值进行grep一下：
+
+```shell
+[root@node1 ~]# iptables -S -t nat | grep 0x4000/0x4000
+-A KUBE-MARK-MASQ -j MARK --set-xmark 0x4000/0x4000
+-A KUBE-POSTROUTING -m comment --comment "kubernetes service traffic requiring SNAT" -m mark --mark 0x4000/0x4000 -j MASQUERADE
+```
+
+看到了吧，凡是带有 0x4000/0x4000 标记的数据包，都会被应用 MASQUERADE 规则（与snat类似，都是用来修改源地址的。区别是snat必须要指定ip，而 MAXQUERADE则可以动态地根据网卡地址来执行）。而且你看 comment 也提到了，这条规则是用来在 "k8s service traffic" 的时候实现 SNAT的。
+
+**所以，KUBE-MARK-MASQ 链的作用是把数据包的源地址改写为当前母机的本机地址。**这样可以避免当数据包之后若做dnat，也不会出现三角流量。
+
+<br>
+
+**既然 KUBE-MARK-MASQ 并不是用来将数据包dnat至各Pod的。那么就只能是剩下的 KUBE-SVC-ILTDUQYRTBDG2DYW 这条链，也就是说，数据包到了这条链上。**我们接下来看看这条链的详细规则：
 
 <br>
 

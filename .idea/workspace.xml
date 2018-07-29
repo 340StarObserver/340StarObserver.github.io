@@ -1,39 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="3dac1c54-bf81-4aca-91d3-691bef18bc89" name="Default Changelist" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/340StarObserver.github.io.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/_posts/Distributed/2018-07-28-Async-Task.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/_site/static/img/2018-07-28-Async-Task_async_frame.png" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/static/img/2018-07-28-Async-Task_async_frame.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.jekyll-metadata" beforeDir="false" afterPath="$PROJECT_DIR$/.jekyll-metadata" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_posts/Distributed/2018-03-08-Consul-Elect.md" beforeDir="false" afterPath="$PROJECT_DIR$/_posts/Distributed/2018-03-08-Consul-Elect.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_posts/Mongodb/2016-06-07-Mongo-ShardKey.md" beforeDir="false" afterPath="$PROJECT_DIR$/_posts/Mongodb/2016-06-07-Mongo-ShardKey.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_posts/Mysql/2017-01-25-Mysql-Backup&amp;Restore.md" beforeDir="false" afterPath="$PROJECT_DIR$/_posts/Mysql/2017-01-25-Mysql-Backup&amp;Restore.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_posts/Virtual/2018-06-18-K8s-Iptables.md" beforeDir="false" afterPath="$PROJECT_DIR$/_posts/Virtual/2018-06-18-K8s-Iptables.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_site/2016/06/07/Mongo-ShardKey/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/_site/2016/06/07/Mongo-ShardKey/index.html" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_site/2017/01/25/Mysql-Backup&amp;Restore/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/_site/2017/01/25/Mysql-Backup&amp;Restore/index.html" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_site/2018/03/09/Consul-Elect/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/_site/2018/03/09/Consul-Elect/index.html" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_site/2018/06/18/K8s-Iptables/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/_site/2018/06/18/K8s-Iptables/index.html" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_site/feed.xml" beforeDir="false" afterPath="$PROJECT_DIR$/_site/feed.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_site/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/_site/index.html" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_site/static/img/1.png" beforeDir="false" afterPath="$PROJECT_DIR$/_site/static/img/2016-06-07-Mongo-ShardKey_stats.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_site/static/img/2.png" beforeDir="false" afterPath="$PROJECT_DIR$/_site/static/img/2016-06-07-Mongo-ShardKey_serverStatus.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_site/static/img/3.png" beforeDir="false" afterPath="$PROJECT_DIR$/_site/static/img/2017-01-25-Mysql-BackupRestore_checkpoints.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_site/static/img/elect_consul.png" beforeDir="false" afterPath="$PROJECT_DIR$/_site/static/img/2018-03-08-Consul-Elect_elect_consul.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_site/static/img/elect_zk.png" beforeDir="false" afterPath="$PROJECT_DIR$/_site/static/img/2018-03-08-Consul-Elect_elect_zk.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/_site/static/img/k8s_net.png" beforeDir="false" afterPath="$PROJECT_DIR$/_site/static/img/2018-06-18-K8s-Iptables_k8s_net.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/static/img/1.png" beforeDir="false" afterPath="$PROJECT_DIR$/static/img/2016-06-07-Mongo-ShardKey_stats.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/static/img/2.png" beforeDir="false" afterPath="$PROJECT_DIR$/static/img/2016-06-07-Mongo-ShardKey_serverStatus.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/static/img/3.png" beforeDir="false" afterPath="$PROJECT_DIR$/static/img/2017-01-25-Mysql-BackupRestore_checkpoints.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/static/img/elect_consul.png" beforeDir="false" afterPath="$PROJECT_DIR$/static/img/2018-03-08-Consul-Elect_elect_consul.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/static/img/elect_zk.png" beforeDir="false" afterPath="$PROJECT_DIR$/static/img/2018-03-08-Consul-Elect_elect_zk.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/static/img/k8s_net.png" beforeDir="false" afterPath="$PROJECT_DIR$/static/img/2018-06-18-K8s-Iptables_k8s_net.png" afterDir="false" />
-    </list>
+    <list default="true" id="3dac1c54-bf81-4aca-91d3-691bef18bc89" name="Default Changelist" comment="" />
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -44,7 +12,7 @@
     <session id="1955664014">
       <usages-collector id="statistics.lifecycle.project">
         <counts>
-          <entry key="project.closed" value="2" />
+          <entry key="project.closed" value="3" />
           <entry key="project.open.time.4" value="3" />
           <entry key="project.opened" value="3" />
         </counts>
@@ -76,20 +44,7 @@
     </session>
   </component>
   <component name="FileEditorManager">
-    <leaf>
-      <file pinned="false" current-in-tab="true">
-        <entry file="file://$PROJECT_DIR$/_posts/Distributed/2018-07-28-Async-Task.md">
-          <provider selected="true" editor-type-id="split-provider[text-editor;markdown-preview-editor]">
-            <state split_layout="FIRST">
-              <first_editor relative-caret-position="154">
-                <caret line="7" lean-forward="true" selection-start-line="7" selection-end-line="7" />
-              </first_editor>
-              <second_editor />
-            </state>
-          </provider>
-        </entry>
-      </file>
-    </leaf>
+    <leaf />
   </component>
   <component name="FindInProjectRecents">
     <findStrings>
@@ -141,12 +96,6 @@
               <item name="340StarObserver.github.io" type="462c0819:PsiDirectoryNode" />
               <item name="_posts" type="462c0819:PsiDirectoryNode" />
             </path>
-            <path>
-              <item name="340StarObserver.github.io" type="b2602c69:ProjectViewProjectNode" />
-              <item name="340StarObserver.github.io" type="462c0819:PsiDirectoryNode" />
-              <item name="_posts" type="462c0819:PsiDirectoryNode" />
-              <item name="Distributed" type="462c0819:PsiDirectoryNode" />
-            </path>
           </expand>
           <select />
         </subPane>
@@ -187,7 +136,6 @@
   </component>
   <component name="ToolWindowManager">
     <frame x="0" y="23" width="1440" height="797" extended-state="0" />
-    <editor active="true" />
     <layout>
       <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.21244635" />
       <window_info id="Structure" order="1" side_tool="true" weight="0.25" />

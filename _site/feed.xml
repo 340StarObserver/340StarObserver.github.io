@@ -5,15 +5,357 @@
     <description>some technical blogs</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Mon, 18 Jun 2018 20:17:25 +0800</pubDate>
-    <lastBuildDate>Mon, 18 Jun 2018 20:17:25 +0800</lastBuildDate>
+    <pubDate>Sat, 28 Jul 2018 22:36:59 +0800</pubDate>
+    <lastBuildDate>Sat, 28 Jul 2018 22:36:59 +0800</lastBuildDate>
     <generator>Jekyll v3.3.1</generator>
+    
+      <item>
+        <title>k8s集群中数据包的流向</title>
+        <description>&lt;p&gt;团队已经把大多数服务迁移到k8s平台上，然而我只是会使用（比如Dockerfile、容器编排等），对深入一点的（比如实现原理、网络方案、故障处理等）不了解。这次决定从k8s容器网络入手进行学习。&lt;strong&gt;本文以实际环境下的一次访问请求为例，分析数据包的完整链路，侧重于iptables在k8s集群中的应用。&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;我画了一张数据包的流向图：&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&quot;http://localhost:4000/static/img/2018-06-18-K8s-Iptables_k8s_net.png&quot; alt=&quot;k8s_net&quot; /&gt;&lt;/p&gt;
+
+&lt;p&gt;如上图所示，在外部访问 web.tdsql.pr.fsphere.cn，它是某数据库的管理端页面。数据包先后经过几大步骤：
+- 第一步：通过外部dns，将域名解析到前置的nginx上（它是公网接入机，因为k8s集群是位于VPC里的，不建议分配公网IP）。且凡是需要在外部访问的域名，都需要配置外部dns。
+- 第二步：前置nginx将匹配 *.pr.fsphere.cn 的请求，以upstream的方式，分摊到每个k8s-node上。
+- 第三步：iptables截获数据包，以dnat的方式，分摊给ingress的每个Pod。
+- 第四步：ingress按照请求的域名和路由进行规则匹配，转发至k8s集群的一个内部域名。
+- 第五步：kube-dns将内部域名解析到一个ClusterIP上（web.tdsql这个Service的vip）。
+- 第六步：在Service上，以kube-proxy的方式，分摊至各RS上。&lt;/p&gt;
+
+&lt;p&gt;下面重点论述第三步～第六步的具体实现。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+
+&lt;h3 id=&quot;section&quot;&gt;环境信息&lt;/h3&gt;
+
+&lt;div class=&quot;language-text highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;集群节点：
+k8s-node1 : 10.10.2.199
+k8s-node2 : 10.10.2.200
+k8s-node3 : 10.10.2.198
+
+// 获取方式：kubectl describe nodes | grep InternalIP
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;language-text highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;namespace = ingress 下的 nginx 服务：
+type : NodePort
+vip  : 192.168.192.30:80
+rs   : 192.168.245.59:80, 192.168.231.18:80, 192.168.235.61:80
+
+// 获取方式：kubectl describe svc nginx -n ingress
+// nginx.ingress是一个裁剪版的nginx容器，所有需要在外部访问的http服务，均可通过它统一接入。只要保证各服务之间，baseDomain一致，fullDomain或者后缀路由不同就行。
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;language-text highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;namespace = tdsql 下的 web 服务：
+type : ClusterIP
+vip  : 192.168.192.64:80
+rs   : 192.168.231.58:80, 192.168.245.34:80, 192.168.245.57:80
+
+// 获取方式：kubectl describe svc web -n tdsql
+// web.tdsql是内部一个数据库的管理端页面的服务。
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+
+&lt;h3 id=&quot;section-1&quot;&gt;第三步的实现&lt;/h3&gt;
+
+&lt;p&gt;先来看看iptables截获数据包之前，数据包原本应该发给哪个进程？&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# netstat -ltnp | grep :80
+tcp        0      0 10.10.2.199:8010        0.0.0.0:&lt;span class=&quot;k&quot;&gt;*&lt;/span&gt;               LISTEN      73329/ssh           
+tcp        0      0 127.0.0.1:8080          0.0.0.0:&lt;span class=&quot;k&quot;&gt;*&lt;/span&gt;               LISTEN      19850/hyperkube     
+tcp        0      0 10.10.2.199:8080        0.0.0.0:&lt;span class=&quot;k&quot;&gt;*&lt;/span&gt;               LISTEN      25427/ssh           
+tcp        0      0 127.0.0.1:8082          0.0.0.0:&lt;span class=&quot;k&quot;&gt;*&lt;/span&gt;               LISTEN      73287/./dcos_oob_de 
+tcp        0      0 127.0.0.1:8083          0.0.0.0:&lt;span class=&quot;k&quot;&gt;*&lt;/span&gt;               LISTEN      73910/./dcos_oob_de 
+tcp        0      0 10.10.2.199:8019        0.0.0.0:&lt;span class=&quot;k&quot;&gt;*&lt;/span&gt;               LISTEN      91587/java          
+tcp        0      0 127.0.0.1:8085          0.0.0.0:&lt;span class=&quot;k&quot;&gt;*&lt;/span&gt;               LISTEN      73103/dcos_cmdb     
+tcp        0      0 127.0.0.1:8087          0.0.0.0:&lt;span class=&quot;k&quot;&gt;*&lt;/span&gt;               LISTEN      75529/./dcos_upgrad 
+tcp        0      0 127.0.0.1:8090          0.0.0.0:&lt;span class=&quot;k&quot;&gt;*&lt;/span&gt;               LISTEN      75693/./dcos_alarm_ 
+tcp        0      0 127.0.0.1:8091          0.0.0.0:&lt;span class=&quot;k&quot;&gt;*&lt;/span&gt;               LISTEN      75708/./dcos_alarm_ 
+tcp6       0      0 :::80                   :::&lt;span class=&quot;k&quot;&gt;*&lt;/span&gt;                    LISTEN      53584/hyperkube     
+tcp6       0      0 :::8081                 :::&lt;span class=&quot;k&quot;&gt;*&lt;/span&gt;                    LISTEN      64176/java
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;如上所示，k8s-node上的80端口，被hyperkube进程监听。&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;这个hyperkube进程哪来的？&lt;/strong&gt;　这是因为nginx.ingress这个Service，被定义为nodePort类型的。k8s会对每个nodePort类型的Service，在每个k8s-node上，都监听对应的端口。这样一来，访问任意一个k8s-node的 nodeIP:nodePort 都行。&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;这个hyperkube进程什么用？&lt;/strong&gt;　因为不管是Pod的ip，还是Service的vip，都是容器网络下的地址。而k8s集群外面的前置nginx无法直接访问k8s的容器网络，只能访问物理网络，这个hyperkube进程充当了容器网络和物理网络的桥梁，提供在物理网络下能够让前置nginx访问的方式。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;下面来看iptables是如何截获母机80端口的数据包，并dnat到nginx.ingress的各Pod上的？&lt;/strong&gt;&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# iptables -S -t nat | grep &lt;span class=&quot;s1&quot;&gt;'dport 80'&lt;/span&gt;
+-A KUBE-NODEPORTS -p tcp -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m tcp --dport 80 -j KUBE-MARK-MASQ
+-A KUBE-NODEPORTS -p tcp -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m tcp --dport 80 -j KUBE-SVC-ILTDUQYRTBDG2DYW
+...
+...
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;如上所示，母机80端口的数据包，首先匹配到上述规则，采取的操作是 KUBE-MARK-MASQ 和 KUBE-SVC-ILTDUQYRTBDG2DYW。我们知道，iptables -j 后面跟的可以是 ACCEPT、DROP、REJECT。这里的两个KUBE开头的字符串，明显是扩展的。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;按照顺序，我们先来看下 KUBE-MARK-MASQ 这条链的作用？&lt;/strong&gt;&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# iptables -S -t nat | grep KUBE-MARK-MASQ
+-N KUBE-MARK-MASQ
+-A KUBE-MARK-MASQ -j MARK --set-xmark 0x4000/0x4000
+...
+...
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;如上所示， KUBE-MARK-MASQ 是用来给数据包打上标记的（标记值为 0x4000/0x4000），那么这个标记又有啥用呢？此时，我们按照这个标记值进行grep一下：&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# iptables -S -t nat | grep 0x4000/0x4000
+-A KUBE-MARK-MASQ -j MARK --set-xmark 0x4000/0x4000
+-A KUBE-POSTROUTING -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;kubernetes service traffic requiring SNAT&quot;&lt;/span&gt; -m mark --mark 0x4000/0x4000 -j MASQUERADE
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;看到了吧，凡是带有 0x4000/0x4000 标记的数据包，都会被应用 MASQUERADE 规则（与snat类似，都是用来修改源地址的。区别是snat必须要指定ip，而 MAXQUERADE则可以动态地根据网卡地址来执行）。而且你看 comment 也提到了，这条规则是用来在 “k8s service traffic” 的时候实现 SNAT的。&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;所以，KUBE-MARK-MASQ 链的作用是把数据包的源地址改写为当前母机的本机地址。&lt;/strong&gt;这样可以避免当数据包之后若做dnat，也不会出现三角流量。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;既然 KUBE-MARK-MASQ 并不是用来将数据包dnat至各Pod的。那么就只能是剩下的 KUBE-SVC-ILTDUQYRTBDG2DYW 这条链，也就是说，数据包到了这条链上。&lt;/strong&gt;我们接下来看看这条链的详细规则：&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# iptables -S -t nat | grep KUBE-SVC-ILTDUQYRTBDG2DYW
+-N KUBE-SVC-ILTDUQYRTBDG2DYW
+-A KUBE-NODEPORTS -p tcp -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m tcp --dport 80 -j KUBE-SVC-ILTDUQYRTBDG2DYW
+-A KUBE-SERVICES -d 192.168.192.30/32 -p tcp -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http cluster IP&quot;&lt;/span&gt; -m tcp --dport 80 -j KUBE-SVC-ILTDUQYRTBDG2DYW
+-A KUBE-SVC-ILTDUQYRTBDG2DYW -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m recent --rcheck --seconds 10800 --reap --name KUBE-SEP-DMJPT5NIA7G72QSV --mask 255.255.255.255 --rsource -j KUBE-SEP-DMJPT5NIA7G72QSV
+-A KUBE-SVC-ILTDUQYRTBDG2DYW -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m recent --rcheck --seconds 10800 --reap --name KUBE-SEP-PQFXUY3XRL2SFBRY --mask 255.255.255.255 --rsource -j KUBE-SEP-PQFXUY3XRL2SFBRY
+-A KUBE-SVC-ILTDUQYRTBDG2DYW -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m recent --rcheck --seconds 10800 --reap --name KUBE-SEP-BAVC27VMIGG6TXQV --mask 255.255.255.255 --rsource -j KUBE-SEP-BAVC27VMIGG6TXQV
+-A KUBE-SVC-ILTDUQYRTBDG2DYW -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m statistic --mode random --probability 0.33332999982 -j KUBE-SEP-DMJPT5NIA7G72QSV
+-A KUBE-SVC-ILTDUQYRTBDG2DYW -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m statistic --mode random --probability 0.50000000000 -j KUBE-SEP-PQFXUY3XRL2SFBRY
+-A KUBE-SVC-ILTDUQYRTBDG2DYW -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -j KUBE-SEP-BAVC27VMIGG6TXQV
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;如上所示，&lt;strong&gt;到达 KUBE-SVC-ILTDUQYRTBDG2DYW 这条链的数据包，会按照百分比转发到三条链上。&lt;/strong&gt;33%可能性会被转到 KUBE-SEP-DMJPT5NIA7G72QSV 链，50%可能性会被转到 KUBE-SEP-PQFXUY3XRL2SFBRY 链，17%可能性背会转到 KUBE-SEP-BAVC27VMIGG6TXQV 链。&lt;/p&gt;
+
+&lt;p&gt;咦，这儿按照百分比进行转发，已经和 “dnat到各Pod上” 有点像了呀。接着看这三条链的细节。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# iptables -S -t nat | grep KUBE-SEP-DMJPT5NIA7G72QSV
+-N KUBE-SEP-DMJPT5NIA7G72QSV
+-A KUBE-SEP-DMJPT5NIA7G72QSV -s 192.168.231.18/32 -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -j KUBE-MARK-MASQ
+-A KUBE-SEP-DMJPT5NIA7G72QSV -p tcp -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m recent --set --name KUBE-SEP-DMJPT5NIA7G72QSV --mask 255.255.255.255 --rsource -m tcp -j DNAT --to-destination 192.168.231.18:80
+-A KUBE-SVC-ILTDUQYRTBDG2DYW -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m recent --rcheck --seconds 10800 --reap --name KUBE-SEP-DMJPT5NIA7G72QSV --mask 255.255.255.255 --rsource -j KUBE-SEP-DMJPT5NIA7G72QSV
+-A KUBE-SVC-ILTDUQYRTBDG2DYW -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m statistic --mode random --probability 0.33332999982 -j KUBE-SEP-DMJPT5NIA7G72QSV
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;如上所示，到达 KUBE-SEP-DMJPT5NIA7G72QSV 链的数据包，被dnat至 192.168.231.18:80，发现了吧，它就是 nginx.ingress 的其中一个Pod的地址～。&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# iptables -S -t nat | grep KUBE-SEP-PQFXUY3XRL2SFBRY
+-N KUBE-SEP-PQFXUY3XRL2SFBRY
+-A KUBE-SEP-PQFXUY3XRL2SFBRY -s 192.168.235.61/32 -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -j KUBE-MARK-MASQ
+-A KUBE-SEP-PQFXUY3XRL2SFBRY -p tcp -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m recent --set --name KUBE-SEP-PQFXUY3XRL2SFBRY --mask 255.255.255.255 --rsource -m tcp -j DNAT --to-destination 192.168.235.61:80
+-A KUBE-SVC-ILTDUQYRTBDG2DYW -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m recent --rcheck --seconds 10800 --reap --name KUBE-SEP-PQFXUY3XRL2SFBRY --mask 255.255.255.255 --rsource -j KUBE-SEP-PQFXUY3XRL2SFBRY
+-A KUBE-SVC-ILTDUQYRTBDG2DYW -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m statistic --mode random --probability 0.50000000000 -j KUBE-SEP-PQFXUY3XRL2SFBRY
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;如上所示，到达 KUBE-SEP-PQFXUY3XRL2SFBRY 链的数据包，被dnat至 192.168.235.61:80，它是 nginx.ingress 的其中另外一个Pod的地址。&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# iptables -S -t nat | grep KUBE-SEP-BAVC27VMIGG6TXQV
+-N KUBE-SEP-BAVC27VMIGG6TXQV
+-A KUBE-SEP-BAVC27VMIGG6TXQV -s 192.168.245.59/32 -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -j KUBE-MARK-MASQ
+-A KUBE-SEP-BAVC27VMIGG6TXQV -p tcp -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m recent --set --name KUBE-SEP-BAVC27VMIGG6TXQV --mask 255.255.255.255 --rsource -m tcp -j DNAT --to-destination 192.168.245.59:80
+-A KUBE-SVC-ILTDUQYRTBDG2DYW -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -m recent --rcheck --seconds 10800 --reap --name KUBE-SEP-BAVC27VMIGG6TXQV --mask 255.255.255.255 --rsource -j KUBE-SEP-BAVC27VMIGG6TXQV
+-A KUBE-SVC-ILTDUQYRTBDG2DYW -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;ingress/nginx:http&quot;&lt;/span&gt; -j KUBE-SEP-BAVC27VMIGG6TXQV
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;如上所示，到达 KUBE-SEP-BAVC27VMIGG6TXQV 链的数据包，被dnat至 192.168.245.59:80，它是 nginx.ingress 的其中另外一个Pod的地址。&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;如此，数据包就被分发到nginx.ingress的三个Pod上了。&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+
+&lt;p&gt;到此，你可能会有个疑问，&lt;strong&gt;分摊到三个Pod的时候，为何不是均匀分摊&lt;/strong&gt;，即百分比为啥不同？
+- 启动第一个Pod的时候，Pod1的百分比是100%。
+- 启动第二个Pod的时候，平均百分比是50%，从当前百分比超过50%的Pod中，挑选一个，划出50%给新的Pod。这样，Pod1的百分比是50%，Pod2的百分比也是50%。
+- 启动第三个Pod的时候，平均百分比是33%，同理，从当前百分比超过33%的Pod中，挑选一个，划出33%给新的Pod。这样，原来的两个Pod中，有一个仍然是50%，有一个只剩下17%，而新的那个是33%。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+
+&lt;h3 id=&quot;section-2&quot;&gt;第四步的实现&lt;/h3&gt;
+
+&lt;p&gt;前面也提到，nginx.ingress 其实是个nginx容器，它基于一个裁剪版的nginx镜像。所以，能够在k8s的ConfigMap中，找到该容器的配置文件：&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# cat /data/kubespray-yaml/ingress/config/ingress.cm.nginx.confd/ingress.cm.web.tdsql.nginx.conf 
+server &lt;span class=&quot;o&quot;&gt;{&lt;/span&gt;
+    listen 80;
+    server_name web.tdsql.pr.fsphere.cn;
+    error_log /var/log/nginx/error.log;
+    access_log /var/log/nginx/web.tdsql-access.log;
+
+    charset utf-8;
+    proxy_set_header Host &lt;span class=&quot;nv&quot;&gt;$host&lt;/span&gt;;
+    proxy_set_header X-Real-IP &lt;span class=&quot;nv&quot;&gt;$remote_addr&lt;/span&gt;;
+    proxy_set_header REMOTE-HOST &lt;span class=&quot;nv&quot;&gt;$remote_addr&lt;/span&gt;;
+    proxy_set_header X-Forwarded-For &lt;span class=&quot;nv&quot;&gt;$proxy_add_x_forwarded_for&lt;/span&gt;;
+    client_max_body_size 512m;
+    client_body_buffer_size 256k;
+    proxy_connect_timeout 30;
+    proxy_send_timeout 30;
+    proxy_read_timeout 60;
+    proxy_buffer_size 256k;
+    proxy_buffers 4 256k;
+    proxy_busy_buffers_size 256k;
+    proxy_temp_file_write_size 256k;
+    proxy_next_upstream error timeout invalid_header http_500 http_503 http_404;
+    proxy_max_temp_file_size 128m;
+
+    location / &lt;span class=&quot;o&quot;&gt;{&lt;/span&gt;
+        proxy_set_header X-Real-IP       &lt;span class=&quot;nv&quot;&gt;$remote_addr&lt;/span&gt;;
+        proxy_set_header Host            &lt;span class=&quot;nv&quot;&gt;$host&lt;/span&gt;;
+        proxy_set_header X-Forwarded-For &lt;span class=&quot;nv&quot;&gt;$proxy_add_x_forwarded_for&lt;/span&gt;;
+        add_header Access-Control-Allow-Credentials &lt;span class=&quot;nb&quot;&gt;true&lt;/span&gt;;
+        proxy_pass http://web.tdsql;
+    &lt;span class=&quot;o&quot;&gt;}&lt;/span&gt;
+
+    error_page 500 502 503 504 /50x.html;
+    location &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; /50x.html &lt;span class=&quot;o&quot;&gt;{&lt;/span&gt;
+        root html;
+    &lt;span class=&quot;o&quot;&gt;}&lt;/span&gt;
+&lt;span class=&quot;o&quot;&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;如上所示，请求的域名 web.tdsql.pr.fsphere.cn 匹配到该配置文件中的规则，请求被进一步，以proxy_pass的方式，转发到 http://web.tdsql 上。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+
+&lt;h3 id=&quot;section-3&quot;&gt;第五步的实现&lt;/h3&gt;
+
+&lt;p&gt;k8s集群内部，如何将 web.tdsql 这个域名，解析到某个地址上？&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# nslookup web.tdsql
+Server:     192.168.192.3
+Address:    192.168.192.3#53
+
+Name:   web.tdsql.svc.cluster.mgmt
+Address: 192.168.192.64
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;如上所示，该域名对应的地址是 192.168.192.64，根据 &lt;环境信息&gt; 小节中来看，它就是 web.tdsql 这个Service的ClusterIP，习惯上也叫做vip。这样一来，有了IP地址，数据包便能真正到达 web.tdsql 的Service上。&lt;/环境信息&gt;&lt;/p&gt;
+
+&lt;p&gt;而 192.168.192.3 这个dns服务器，又是哪里来的？&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# kubectl describe svc kube-dns -n kube-system
+2018-06-18 15:17:48.802440 I | proto: duplicate proto &lt;span class=&quot;nb&quot;&gt;type &lt;/span&gt;registered: google.protobuf.Any
+2018-06-18 15:17:48.803242 I | proto: duplicate proto &lt;span class=&quot;nb&quot;&gt;type &lt;/span&gt;registered: google.protobuf.Duration
+2018-06-18 15:17:48.803295 I | proto: duplicate proto &lt;span class=&quot;nb&quot;&gt;type &lt;/span&gt;registered: google.protobuf.Timestamp
+Name:           kube-dns
+Namespace:      kube-system
+Labels:         addonmanager.kubernetes.io/mode&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;Reconcile
+            k8s-app&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;kube-dns
+            kubernetes.io/cluster-service&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;true
+            &lt;/span&gt;kubernetes.io/name&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;KubeDNS
+Annotations:        &amp;lt;none&amp;gt;
+Selector:       k8s-app&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;kube-dns
+Type:           ClusterIP
+IP:         192.168.192.3
+Port:           dns 53/UDP
+Endpoints:      192.168.231.34:53,192.168.231.38:53,192.168.235.8:53
+Port:           dns-tcp 53/TCP
+Endpoints:      192.168.231.34:53,192.168.231.38:53,192.168.235.8:53
+Session Affinity:   None
+Events:         &amp;lt;none&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;如上所示，192.168.192.3 其实是 kube-system 这个名字空间下的 kube-dns 这个Service的vip。kube-dns是k8s自带的，用以实现服务发现。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+
+&lt;h3 id=&quot;section-4&quot;&gt;第六步的实现&lt;/h3&gt;
+
+&lt;p&gt;现在，数据包到达 web.tdsql 这个 Service了，最后如何以 kube-proxy 的方式，分摊到 web.tdsql 的各Pod呢？&lt;/p&gt;
+
+&lt;p&gt;首先，要查出与 访问该Service的vip:vport 匹配的规则，也就是 192.168.192.64:80。&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# iptables -S -t nat | grep 192.168.192.64 | grep 80
+-A KUBE-SERVICES ! -s 192.168.224.0/19 -d 192.168.192.64/32 -p tcp -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web: cluster IP&quot;&lt;/span&gt; -m tcp --dport 80 -j KUBE-MARK-MASQ
+-A KUBE-SERVICES -d 192.168.192.64/32 -p tcp -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web: cluster IP&quot;&lt;/span&gt; -m tcp --dport 80 -j KUBE-SVC-BJMJPDVPPZKAQKK7
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;如上所示，&lt;strong&gt;请求 192.168.192.64:80 的数据包，匹配到规则，将会到达 KUBE-SVC-BJMJPDVPPZKAQKK7 这条链。&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+
+&lt;p&gt;接下来，和前面 &lt;第四步的实现&gt; 小节中的，就是一个道理了。即看 KUBE-SVC-BJMJPDVPPZKAQKK7 这条链的具体规则：&lt;/第四步的实现&gt;&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# iptables -S -t nat | grep KUBE-SVC-BJMJPDVPPZKAQKK7
+-N KUBE-SVC-BJMJPDVPPZKAQKK7
+-A KUBE-SERVICES -d 192.168.192.64/32 -p tcp -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web: cluster IP&quot;&lt;/span&gt; -m tcp --dport 80 -j KUBE-SVC-BJMJPDVPPZKAQKK7
+-A KUBE-SVC-BJMJPDVPPZKAQKK7 -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web:&quot;&lt;/span&gt; -m statistic --mode random --probability 0.33332999982 -j KUBE-SEP-GVR3A2XHGAQS7LDR
+-A KUBE-SVC-BJMJPDVPPZKAQKK7 -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web:&quot;&lt;/span&gt; -m statistic --mode random --probability 0.50000000000 -j KUBE-SEP-RY5WDFQPQ3P6KIT5
+-A KUBE-SVC-BJMJPDVPPZKAQKK7 -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web:&quot;&lt;/span&gt; -j KUBE-SEP-ANYCT6LXRLLWZRMQ
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;如上所示，&lt;strong&gt;到达 KUBE-SVC-BJMJPDVPPZKAQKK7 链的数据包，按照 33%、50%、17%的比例，分别转到 KUBE-SEP-GVR3A2XHGAQS7LDR、KUBE-SEP-RY5WDFQPQ3P6KIT5、KUBE-SEP-ANYCT6LXRLLWZRMQ 这三条链上。&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# iptables -S -t nat | grep KUBE-SEP-GVR3A2XHGAQS7LDR
+-N KUBE-SEP-GVR3A2XHGAQS7LDR
+-A KUBE-SEP-GVR3A2XHGAQS7LDR -s 192.168.231.58/32 -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web:&quot;&lt;/span&gt; -j KUBE-MARK-MASQ
+-A KUBE-SEP-GVR3A2XHGAQS7LDR -p tcp -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web:&quot;&lt;/span&gt; -m tcp -j DNAT --to-destination 192.168.231.58:80
+-A KUBE-SVC-BJMJPDVPPZKAQKK7 -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web:&quot;&lt;/span&gt; -m statistic --mode random --probability 0.33332999982 -j KUBE-SEP-GVR3A2XHGAQS7LDR
+
+&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# iptables -S -t nat | grep KUBE-SEP-RY5WDFQPQ3P6KIT5
+-N KUBE-SEP-RY5WDFQPQ3P6KIT5
+-A KUBE-SEP-RY5WDFQPQ3P6KIT5 -s 192.168.245.34/32 -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web:&quot;&lt;/span&gt; -j KUBE-MARK-MASQ
+-A KUBE-SEP-RY5WDFQPQ3P6KIT5 -p tcp -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web:&quot;&lt;/span&gt; -m tcp -j DNAT --to-destination 192.168.245.34:80
+-A KUBE-SVC-BJMJPDVPPZKAQKK7 -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web:&quot;&lt;/span&gt; -m statistic --mode random --probability 0.50000000000 -j KUBE-SEP-RY5WDFQPQ3P6KIT5
+
+&lt;span class=&quot;o&quot;&gt;[&lt;/span&gt;root@node1 ~]# iptables -S -t nat | grep KUBE-SEP-ANYCT6LXRLLWZRMQ
+-N KUBE-SEP-ANYCT6LXRLLWZRMQ
+-A KUBE-SEP-ANYCT6LXRLLWZRMQ -s 192.168.245.57/32 -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web:&quot;&lt;/span&gt; -j KUBE-MARK-MASQ
+-A KUBE-SEP-ANYCT6LXRLLWZRMQ -p tcp -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web:&quot;&lt;/span&gt; -m tcp -j DNAT --to-destination 192.168.245.57:80
+-A KUBE-SVC-BJMJPDVPPZKAQKK7 -m comment --comment &lt;span class=&quot;s2&quot;&gt;&quot;tdsql/web:&quot;&lt;/span&gt; -j KUBE-SEP-ANYCT6LXRLLWZRMQ
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;如上所示，&lt;strong&gt;到达这三条链的数据包，被分别dnat至 192.168.231.58:80、192.168.245.34:80、192.168.245.57:80 三个Pod上。&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;如此，数据包终于到达了目标终点～。&lt;/p&gt;
+</description>
+        <pubDate>Mon, 18 Jun 2018 23:48:00 +0800</pubDate>
+        <link>http://localhost:4000/2018/06/18/K8s-Iptables/</link>
+        <guid isPermaLink="true">http://localhost:4000/2018/06/18/K8s-Iptables/</guid>
+        
+        
+        <category>Virtual</category>
+        
+      </item>
     
       <item>
         <title>基于Consul做主备选举</title>
         <description>&lt;p&gt;有一个数据库的管控系统，设计了如下的异步的任务执行架构 :&lt;/p&gt;
 
-&lt;p&gt;&lt;img src=&quot;http://localhost:4000/static/img/elect_consul.png&quot; alt=&quot;frameA&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;http://localhost:4000/static/img/2018-03-08-Consul-Elect_elect_consul.png&quot; alt=&quot;frameA&quot; /&gt;&lt;/p&gt;
 
 &lt;p&gt;Step1. 管控页面接收用户的操作请求，将请求转发给OSS。&lt;/p&gt;
 
@@ -305,7 +647,7 @@ curl -X PUT http://172.16.4.10:8500/v1/kv/oracleTask/task_${id}?cas=${原modifyI
 
 &lt;h3 id=&quot;section-2&quot;&gt;四. 合理的架构&lt;/h3&gt;
 
-&lt;p&gt;&lt;img src=&quot;http://localhost:4000/static/img/elect_zk.png&quot; alt=&quot;frameB&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;http://localhost:4000/static/img/2018-03-08-Consul-Elect_elect_zk.png&quot; alt=&quot;frameB&quot; /&gt;&lt;/p&gt;
 
 &lt;p&gt;Step1. 多个MQ组成集群，通过HAproxy提供一个vip。（解决上述的问题一）。&lt;/p&gt;
 
@@ -1467,7 +1809,7 @@ Check   : 健康检查（以HTTP方式进行检查，当 http://172.16.4.15 返�
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;p&gt;&lt;img src=&quot;http://localhost:4000/static/img/3.png&quot; alt=&quot;全备份的checkpoints&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;http://localhost:4000/static/img/2017-01-25-Mysql-BackupRestore_checkpoints.png.png&quot; alt=&quot;全备份的checkpoints&quot; /&gt;&lt;/p&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    可以看到 :  
         增量1.from_lsn = 全备 .to_lsn  
@@ -2088,116 +2430,6 @@ Check   : 健康检查（以HTTP方式进行检查，当 http://172.16.4.15 返�
         
         
         <category>Linux</category>
-        
-      </item>
-    
-      <item>
-        <title>mysql存储过程 &amp; 触发器</title>
-        <description>&lt;p&gt;我把做App时候的一个存储过程（邀请注册）记录下来，以便之后不用再花时间研究它的格式了&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    /*  
-        procedure for regedit a new account  
-        parameters  
-        {  
-        	usr        : the username you want to use  
-        	pwd        : the password you want to use,and it is encoded to char(32) by md5  
-        	registtime : the time when regedit  
-        	invitor    : the username of person that he invited you to regedit a new account  
-        	authcode   : the necessary code for regedit that you get from your invitor  
-        	res        : 0 authcode is wrong;1 username has been used by others;2 transaction error;3 succeed  
-        }  
-        to make our deepnote environment good,we hope that our users are good readers,so we use invite regedit method  
-        that is to say,if you want to regedit successfully,  
-        A. you should get a right authcode or called invitecode  
-        B. your username has not been used by others  
-    */  
-    
-    drop procedure if exists regedit;  
-    delimiter //  
-    create procedure regedit (in usr varchar(16),in pwd char(32),in registtime int(11),in invitor varchar(16),in authcode char(32),out res tinyint(1))  
-    begin  
-        declare lastid int;  
-        declare t_error int default 0;  
-        declare continue handler for sqlexception set t_error=1;  
-        
-        start transaction;  
-    	set res=0;  
-    	if exists(select 1 from usertable where username=invitor and inviteauth=1 and invitecode=authcode limit 1)  
-    	then  
-    		if exists(select 1 from usertable where username=usr limit 1)  
-    		then  
-    			set res=1;  
-    		else  
-    			insert into usertable (username,password,birthtime) values(usr,pwd,registtime);  
-    			set lastid=LAST_INSERT_ID();  
-    			insert into classifytable (userid) values(lastid);  
-    			set res=3;  
-    		end if;  
-    	end if;  
-    	
-    	if t_error=0 then  
-            commit;  
-            set res=3;  
-        else  
-            rollback;  
-            set res=2;  
-        end if;  
-        
-    end //  
-    delimiter ;  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;hr /&gt;
-
-&lt;p&gt;尝试用触发器的时候，踩过一些坑，这里记录一下&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    drop trigger if exists check_sailors;
-    delimiter //
-    create trigger check_sailors after insert on Sailors for each row
-    begin
-    	if exists(select * from Sailors 
-    		where master is not NULL and master=NEW.master 
-    		group by master having count(*)&amp;gt;2)
-    	then
-    		delete from Sailors where sid = NEW.sid limit 1;
-    	end if;
-    end //
-    delimiter ;
-    
-    -- mysql5.6 don't support {commit, start transaction, rollback} in trigger  
-    -- mysql5.6 don't support 'referencing NEW as N'  
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;hr /&gt;
-
-&lt;p&gt;对比一下 Postgresql 的存储过程，我写了一个转账的事务例子&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    create or replace function transfer(
-    	sender bigint, receiver bigint, amount numeric(20,2)
-    	) returns boolean AS $$
-    begin
-    	update customer set balance = balance - amount where id = sender;
-    	update customer set balance = balance + amount where id = receiver;
-    
-    	if exists(select 1 from customer where id = sender and balance &amp;lt; 0.00 limit 1) then
-    		rollback;
-    	end if;
-    
-    	return True;
-    	commit;
-    end;
-    $$ language plpgsql;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-</description>
-        <pubDate>Thu, 10 Nov 2016 16:05:00 +0800</pubDate>
-        <link>http://localhost:4000/2016/11/10/Mysql-Procedure/</link>
-        <guid isPermaLink="true">http://localhost:4000/2016/11/10/Mysql-Procedure/</guid>
-        
-        
-        <category>Mysql</category>
         
       </item>
     

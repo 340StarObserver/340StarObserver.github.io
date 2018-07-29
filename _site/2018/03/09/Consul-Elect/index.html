@@ -98,7 +98,7 @@
       <article>
         <p>有一个数据库的管控系统，设计了如下的异步的任务执行架构 :</p>
 
-<p><img src="http://localhost:4000/static/img/elect_consul.png" alt="frameA" /></p>
+<p><img src="http://localhost:4000/static/img/2018-03-08-Consul-Elect_elect_consul.png" alt="frameA" /></p>
 
 <p>Step1. 管控页面接收用户的操作请求，将请求转发给OSS。</p>
 
@@ -390,7 +390,7 @@ curl -X PUT http://172.16.4.10:8500/v1/kv/oracleTask/task_${id}?cas=${原modifyI
 
 <h3 id="section-2">四. 合理的架构</h3>
 
-<p><img src="http://localhost:4000/static/img/elect_zk.png" alt="frameB" /></p>
+<p><img src="http://localhost:4000/static/img/2018-03-08-Consul-Elect_elect_zk.png" alt="frameB" /></p>
 
 <p>Step1. 多个MQ组成集群，通过HAproxy提供一个vip。（解决上述的问题一）。</p>
 

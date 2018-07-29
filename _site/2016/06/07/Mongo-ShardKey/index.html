@@ -177,13 +177,13 @@
 </code></pre>
 </div>
 
-<p><img src="http://localhost:4000/static/img/1.png" alt="db.stats()" /></p>
+<p><img src="http://localhost:4000/static/img/2016-06-07-Mongo-ShardKey_stats.png" alt="db.stats()" /></p>
 
 <div class="highlighter-rouge"><pre class="highlight"><code>    如上图，切换到你的库，然后通过db.stats()来查看，其中的indexSize便是这个库下的所有索引的字节数
 </code></pre>
 </div>
 
-<p><img src="http://localhost:4000/static/img/2.png" alt="db.serverStatus()" /></p>
+<p><img src="http://localhost:4000/static/img/2016-06-07-Mongo-ShardKey_serverStatus.png" alt="db.serverStatus()" /></p>
 
 <div class="highlighter-rouge"><pre class="highlight"><code>    如上图，进入admin库，然后通过db.serverStatus()来查看，它会打印出最近15分钟内的情况。  
     此处我只打印出extra_info这个字段（当然很建议也去看看其他字段的信息） :  

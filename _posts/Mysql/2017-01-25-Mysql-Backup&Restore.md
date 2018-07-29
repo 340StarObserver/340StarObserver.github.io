@@ -112,7 +112,7 @@ comments: true
             // 勤于增备，每小时一次为佳  
 
 
-![全备份的checkpoints]({{ site.url }}/static/img/3.png)
+![全备份的checkpoints]({{ site.url }}/static/img/2017-01-25-Mysql-BackupRestore_checkpoints.png)
 
         可以看到 :  
             增量1.from_lsn = 全备 .to_lsn  

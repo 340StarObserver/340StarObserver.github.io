@@ -8,7 +8,7 @@ comments: true
 
 有一个数据库的管控系统，设计了如下的异步的任务执行架构 :
 
-![frameA]({{ site.url }}/static/img/elect_consul.png)
+![frameA]({{ site.url }}/static/img/2018-03-08-Consul-Elect_elect_consul.png)
 
 Step1. 管控页面接收用户的操作请求，将请求转发给OSS。
 
@@ -301,7 +301,7 @@ if __name__ == "__main__":
 
 ### 四. 合理的架构 ###
 
-![frameB]({{ site.url }}/static/img/elect_zk.png)
+![frameB]({{ site.url }}/static/img/2018-03-08-Consul-Elect_elect_zk.png)
 
 Step1. 多个MQ组成集群，通过HAproxy提供一个vip。（解决上述的问题一）。
 

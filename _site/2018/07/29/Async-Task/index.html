@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>多步骤的异步任务模型</title>
+	<meta name="description" content="一、异步任务框架以往在处理异步任务的时候，有过三种选择 ：第一种选择  描述 ：子线程。  劣势 ：线程间协调不好处理。代码耦合。第二种选择  描述 ：把任务写进DB，由另一个进程每隔一段时间轮询DB并执行。（注，相比进程内部定期轮询，用crontab定期拉起消费者进程则更为可用。）  劣势 ：DB轮询压力大。实...">
+	
+	<link rel="canonical" href="http://localhost:4000/2018/07/29/Async-Task/">
+	<link rel="alternate" type="application/rss+xml" title="Principality Of 340号恒星观测员" href="http://localhost:4000/feed.xml" />
+	
+	<!-- <link rel="stylesheet" href="/css/main.css"> -->
+    
+    <link rel="stylesheet" type="text/css" href="/static/css/bootstrap.min.css">
+    <link rel="stylesheet" type="text/css" href="/static/css/index.css">
+	<script type="text/javascript" src="/static/js/jquery-1.11.1.min.js"></script>
+	<script type="text/javascript" src="/static/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="/static/css/monokai_sublime.min.css">
+	<script type="text/javascript" src="/static/js/highlight.min.js"></script>
+
+    <!--
+    <link rel="stylesheet" type="text/css" href="http://apps.bdimg.com/libs/bootstrap/3.3.0/css/bootstrap.min.css">
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/jquery/2.1.1/jquery.min.js"></script>
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/bootstrap/3.3.0/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="http://apps.bdimg.com/libs/highlight.js/8.4/styles/monokai_sublime.min.css">
+	<script type="text/javascript" src="http://apps.bdimg.com/libs/highlight.js/8.4/highlight.min.js"></script>
+    -->
+    
+	<script type="text/javascript" src="/static/js/index.js"></script>
+	<script>hljs.initHighlightingOnLoad();</script>
+</head>
+
+ <!--  <body data-spy="scroll" data-target="#myAffix"> -->
+  <body>
+
+    <header>
+
+<!-- navbar -->
+  <nav class="navbar navbar-inverse">
+  <div class="container">
+    <!-- Brand and toggle get grouped for better mobile display -->
+    <div class="navbar-header">
+      <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#bs-example-navbar-collapse-1">
+        <span class="sr-only">Toggle navigation</span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+      </button>
+      <a class="navbar-brand" href="/">Principality Of 340号恒星观测员</a>
+      <p class="navbar-text"></p>
+    </div>
+    <!-- Collect the nav links, forms, and other content for toggling -->
+    <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
+      <ul class="nav navbar-nav navbar-right">
+
+        
+          <li>
+        
+        <a href="/">Home</a></li>
+
+        
+          
+            
+              <li>
+            
+            <a href="/projects/"><span class="glyphicon "></span> Projects</a></li>
+          
+        
+          
+            
+              <li>
+            
+            <a href="/about/"><span class="glyphicon "></span> About</a></li>
+          
+        
+          
+        
+          
+        
+      </ul>
+    </div><!-- /.navbar-collapse -->
+  </div><!-- /.container-fluid -->
+</nav>
+
+</header>
+
+    <div id="main" class="container main">
+      <div class="row">
+  <div id="myArticle" class="col-sm-9">
+    <div class="post-area post">
+      <header>
+        <h1>多步骤的异步任务模型</h1>
+        <p>Jul 29, 2018</p>
+      </header>
+      <hr>
+      <article>
+        <h2 id="section">一、异步任务框架</h2>
+
+<p>以往在处理异步任务的时候，有过三种选择 ：</p>
+
+<p><strong>第一种选择</strong></p>
+
+<ul>
+  <li>描述 ：子线程。</li>
+  <li>劣势 ：线程间协调不好处理。代码耦合。</li>
+</ul>
+
+<p><strong>第二种选择</strong></p>
+
+<ul>
+  <li>描述 ：把任务写进DB，由另一个进程每隔一段时间轮询DB并执行。（注，相比进程内部定期轮询，用crontab定期拉起消费者进程则更为可用。）</li>
+  <li>劣势 ：DB轮询压力大。实时性不高。</li>
+</ul>
+
+<p><strong>第三种选择</strong></p>
+
+<ul>
+  <li>描述 ：把任务写进MQ，由另一个进程收取消息并执行。（注，性能和实时性均高于第二种选择。）</li>
+  <li>劣势 ：一个任务往往是由多个步骤组成的，不同任务之间，往往会存在很多相同的子步骤，造成很多重复代码。</li>
+</ul>
+
+<p>当我们把场景定位于服务端的多步骤的复杂耗时的异步任务时，上述三种选择均不可取。其实第三种选择只是不够优雅，如果能消除重复的子步骤代码，那就是比较好的一个方案了。讨论下图的模型（参考了一些服务端模型后总结） ：</p>
+
+<p><img src="http://localhost:4000/static/img/2018-07-28-Async-Task_async_frame.png" alt="async_frame" /></p>
+
+<p><strong>优雅的做法如上图</strong></p>
+
+<ul>
+  <li>1、消费者被拆成多个模块，各模块只专注做好自己的事情。</li>
+  <li>2、各模块监听 非同名的 队列，以免相互干扰。</li>
+  <li>3、OSS 收到请求后，把整个任务写进DB，并且把任务的第一个子步骤写到 该子步骤对应的队列。</li>
+  <li>4、第一个子步骤 对应的 执行模块，收到消息，执行第一步。然后查DB，把下一个子步骤写到MQ中，以此串起来。</li>
+</ul>
+
+<p>下面重点论述 任务、消息的数据结构 以及 OSS、执行模块的概要逻辑。</p>
+
+<p><br /></p>
+
+<h2 id="db--">二、DB 中的 整个任务</h2>
+
+<div class="language-json highlighter-rouge"><pre class="highlight"><code><span class="p">{</span><span class="w">
+    </span><span class="nt">"TaskId"</span><span class="w">      </span><span class="p">:</span><span class="w"> </span><span class="err">任务编号</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"TaskStatus"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="err">任务状态</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"TaskMessage"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="err">任务报错</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"TaskCursor"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="err">游标编号（进行到了第几子步骤）</span><span class="p">,</span><span class="w">
+
+    </span><span class="nt">"TimeCreate"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="err">任务创建时间</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"TimeStart"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="err">任务开始时间</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"TimeEnd"</span><span class="w">     </span><span class="p">:</span><span class="w"> </span><span class="err">任务结束时间</span><span class="p">,</span><span class="w">
+
+    </span><span class="nt">"Parameters"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="err">子步骤共享参数</span><span class="p">,</span><span class="w">
+
+    </span><span class="nt">"Steps"</span><span class="w">       </span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+        </span><span class="p">{</span><span class="w">
+            </span><span class="nt">"Code"</span><span class="w">            </span><span class="p">:</span><span class="w"> </span><span class="err">子步骤结果</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"Message"</span><span class="w">         </span><span class="p">:</span><span class="w"> </span><span class="err">子步骤报错</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"TimeStart"</span><span class="w">       </span><span class="p">:</span><span class="w"> </span><span class="err">子步骤开始时间</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"TimeEnd"</span><span class="w">         </span><span class="p">:</span><span class="w"> </span><span class="err">子步骤结束时间</span><span class="p">,</span><span class="w">
+
+            </span><span class="nt">"NormalModule"</span><span class="w">    </span><span class="p">:</span><span class="w"> </span><span class="err">正常流程的处理模块</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalCommand"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="err">正常流程的处理命令</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalTimeout"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="err">正常流程的时间限制</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalRetry"</span><span class="w">     </span><span class="p">:</span><span class="w"> </span><span class="err">正常流程的重试限制</span><span class="p">,</span><span class="w">
+
+            </span><span class="nt">"RollbackModule"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="err">回滚流程的处理模块</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackCommand"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="err">回滚流程的处理命令</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackTimeout"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="err">回滚流程的时间限制</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackRetry"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="err">回滚流程的重试限制</span><span class="w">
+        </span><span class="p">},</span><span class="w">
+        </span><span class="err">...</span><span class="w">
+        </span><span class="err">...</span><span class="w">
+    </span><span class="p">]</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre>
+</div>
+
+<p><strong>任务状态</strong></p>
+
+<ul>
+  <li>0 成功</li>
+  <li>1 未开始</li>
+  <li>2 执行中</li>
+  <li>3 回滚中</li>
+  <li>other 失败</li>
+</ul>
+
+<p><strong>子步骤共享参数</strong></p>
+
+<ul>
+  <li>包含 OSS 收到的参数 + 各子步骤均需要的公共参数 + 各子步骤的结果（以便后续子步骤能获取上游的执行结果）。</li>
+</ul>
+
+<p><strong>处理模块 &amp; 处理命令</strong></p>
+
+<ul>
+  <li>比如有一个叫 image 的执行模块，它可以处理的命令有 download_image，check_image，backup_image 等。</li>
+</ul>
+
+<p><br /></p>
+
+<h2 id="mq--">三、MQ 中的 步骤消息</h2>
+
+<div class="language-json highlighter-rouge"><pre class="highlight"><code><span class="p">{</span><span class="w">
+    </span><span class="nt">"TaskId"</span><span class="w">     </span><span class="p">:</span><span class="w"> </span><span class="err">所属任务</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Cursor"</span><span class="w">     </span><span class="p">:</span><span class="w"> </span><span class="err">当前游标</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Type"</span><span class="w">       </span><span class="p">:</span><span class="w"> </span><span class="err">当前类型</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Pamameters"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="err">共享数据</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Module"</span><span class="w">     </span><span class="p">:</span><span class="w"> </span><span class="err">执行模块</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Command"</span><span class="w">    </span><span class="p">:</span><span class="w"> </span><span class="err">执行命令</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Timeout"</span><span class="w">    </span><span class="p">:</span><span class="w"> </span><span class="err">执行时间限制</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Retry"</span><span class="w">      </span><span class="p">:</span><span class="w"> </span><span class="err">执行重试次数限制</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre>
+</div>
+
+<p><strong>当前游标</strong></p>
+
+<ul>
+  <li>若一路的子步骤都是正常的，那么 ：消息中的游标 = 任务中的游标。</li>
+  <li>若在第n子步骤失败了，那么 ：任务中的游标就固定在n不会变了（它表示任务最远进行到步骤n）；而消息中的游标是会不断减一（它表示依次向前回滚）。</li>
+</ul>
+
+<p><strong>当前类型</strong></p>
+
+<ul>
+  <li>0 正常流程</li>
+  <li>1 回滚流程</li>
+</ul>
+
+<p><br /></p>
+
+<h2 id="api-">四、API 创建任务的逻辑</h2>
+
+<p>例如，用户发起了一个 创建数据库实例 的任务。</p>
+
+<p><strong>1、OSS查询任务流程配置</strong></p>
+
+<div class="language-json highlighter-rouge"><pre class="highlight"><code><span class="p">{</span><span class="w">
+    </span><span class="nt">"modify_ntp"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+        </span><span class="p">{</span><span class="w">
+            </span><span class="nt">"normal"</span><span class="w">      </span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+                </span><span class="nt">"module"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="s2">"resource"</span><span class="p">,</span><span class="w">
+                </span><span class="nt">"command"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"check_resource"</span><span class="p">,</span><span class="w">   </span><span class="err">//</span><span class="w"> </span><span class="err">资源检查</span><span class="w">
+                </span><span class="nt">"timeout"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mi">300</span><span class="p">,</span><span class="w">
+                </span><span class="nt">"retry"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="w">
+            </span><span class="p">},</span><span class="w">
+            </span><span class="nt">"rollback"</span><span class="w">    </span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+                </span><span class="nt">"module"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="s2">"monitor"</span><span class="p">,</span><span class="w">
+                </span><span class="nt">"command"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"report_event"</span><span class="p">,</span><span class="w">     </span><span class="err">//</span><span class="w"> </span><span class="err">上报告警</span><span class="w">
+                </span><span class="nt">"timeout"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mi">300</span><span class="p">,</span><span class="w">
+                </span><span class="nt">"retry"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="w">
+            </span><span class="p">},</span><span class="w">
+        </span><span class="err">}</span><span class="p">,</span><span class="w">
+        </span><span class="p">{</span><span class="w">
+            </span><span class="nt">"normal"</span><span class="w">      </span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+                </span><span class="nt">"module"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="s2">"mysql"</span><span class="p">,</span><span class="w">
+                </span><span class="nt">"command"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"init_instance"</span><span class="p">,</span><span class="w">    </span><span class="err">//</span><span class="w"> </span><span class="err">初始化实例</span><span class="w">
+                </span><span class="nt">"timeout"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mi">1800</span><span class="p">,</span><span class="w">
+                </span><span class="nt">"retry"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="w">
+            </span><span class="p">},</span><span class="w">
+            </span><span class="nt">"rollback"</span><span class="w">    </span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+                </span><span class="nt">"module"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="s2">"mysql"</span><span class="p">,</span><span class="w">
+                </span><span class="nt">"command"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"clean_instance"</span><span class="p">,</span><span class="w">   </span><span class="err">//</span><span class="w"> </span><span class="err">清除初始化实例过程中留下的东西</span><span class="w">
+                </span><span class="nt">"timeout"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mi">900</span><span class="p">,</span><span class="w">
+                </span><span class="nt">"retry"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="w">
+            </span><span class="p">},</span><span class="w">
+        </span><span class="err">}</span><span class="p">,</span><span class="w">
+        </span><span class="p">{</span><span class="w">
+            </span><span class="nt">"normal"</span><span class="w">      </span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+                </span><span class="nt">"module"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="s2">"resource"</span><span class="p">,</span><span class="w">
+                </span><span class="nt">"command"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"deduct_resource"</span><span class="p">,</span><span class="w">  </span><span class="err">//</span><span class="w"> </span><span class="err">扣除资源</span><span class="w">
+                </span><span class="nt">"timeout"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="p">,</span><span class="w">
+                </span><span class="nt">"retry"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="w">
+            </span><span class="p">},</span><span class="w">
+            </span><span class="nt">"rollback"</span><span class="w">    </span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+                </span><span class="nt">"module"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="s2">"resource"</span><span class="p">,</span><span class="w">
+                </span><span class="nt">"command"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"restore_resource"</span><span class="p">,</span><span class="w"> </span><span class="err">//</span><span class="w"> </span><span class="err">恢复资源</span><span class="w">
+                </span><span class="nt">"timeout"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="p">,</span><span class="w">
+                </span><span class="nt">"retry"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="w">
+            </span><span class="p">},</span><span class="w">
+        </span><span class="err">}</span><span class="w">
+    </span><span class="p">],</span><span class="w">
+    </span><span class="err">...</span><span class="w">
+    </span><span class="err">...</span><span class="w">
+</span><span class="err">}</span><span class="w">
+</span></code></pre>
+</div>
+
+<p>即有这样的一个逻辑 ：</p>
+
+<p><img src="http://localhost:4000/static/img/2018-07-28-Async-Task_task_example.png" alt="async_frame" /></p>
+
+<p><strong>2、OSS生成任务，并写入DB</strong></p>
+
+<div class="language-json highlighter-rouge"><pre class="highlight"><code><span class="p">{</span><span class="w">
+    </span><span class="nt">"TaskId"</span><span class="w">      </span><span class="p">:</span><span class="w"> </span><span class="err">全局唯一的ID</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"TaskStatus"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"TaskMessage"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"TaskCursor"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"TimeCreate"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="err">当前秒级时间戳</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"TimeStart"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"TimeEnd"</span><span class="w">     </span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Parameters"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+        </span><span class="nt">"Cpu"</span><span class="w">     </span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w">
+        </span><span class="nt">"Memory"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span><span class="w">
+        </span><span class="nt">"Storage"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mi">500</span><span class="w">
+    </span><span class="p">},</span><span class="w">
+    </span><span class="nt">"Steps"</span><span class="w">       </span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+        </span><span class="p">{</span><span class="w">
+            </span><span class="nt">"Code"</span><span class="w">            </span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"Message"</span><span class="w">         </span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"TimeStart"</span><span class="w">       </span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"TimeEnd"</span><span class="w">         </span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalModule"</span><span class="w">    </span><span class="p">:</span><span class="w"> </span><span class="s2">"resource"</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalCommand"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="s2">"check_resource"</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalTimeout"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mi">300</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalRetry"</span><span class="w">     </span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackModule"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="s2">"monitor"</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackCommand"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"report_event"</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackTimeout"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mi">300</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackRetry"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="w">
+        </span><span class="p">},</span><span class="w">
+        </span><span class="p">{</span><span class="w">
+            </span><span class="nt">"Code"</span><span class="w">            </span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"Message"</span><span class="w">         </span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"TimeStart"</span><span class="w">       </span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"TimeEnd"</span><span class="w">         </span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalModule"</span><span class="w">    </span><span class="p">:</span><span class="w"> </span><span class="s2">"mysql"</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalCommand"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="s2">"init_instance"</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalTimeout"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mi">1800</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalRetry"</span><span class="w">     </span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackModule"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="s2">"mysql"</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackCommand"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"clean_instance"</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackTimeout"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mi">900</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackRetry"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="w">
+        </span><span class="p">},</span><span class="w">
+        </span><span class="p">{</span><span class="w">
+            </span><span class="nt">"Code"</span><span class="w">            </span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"Message"</span><span class="w">         </span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"TimeStart"</span><span class="w">       </span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"TimeEnd"</span><span class="w">         </span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalModule"</span><span class="w">    </span><span class="p">:</span><span class="w"> </span><span class="s2">"resource"</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalCommand"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="s2">"deduct_resource"</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalTimeout"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"NormalRetry"</span><span class="w">     </span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackModule"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="s2">"resource"</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackCommand"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="s2">"restore_resource"</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackTimeout"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="p">,</span><span class="w">
+            </span><span class="nt">"RollbackRetry"</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="w">
+        </span><span class="p">}</span><span class="w">
+    </span><span class="p">]</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre>
+</div>
+
+<p><strong>3、OSS生成第一个子步骤的消息，并写入MQ</strong></p>
+
+<div class="language-json highlighter-rouge"><pre class="highlight"><code><span class="p">{</span><span class="w">
+    </span><span class="nt">"TaskId"</span><span class="w">      </span><span class="p">:</span><span class="w"> </span><span class="err">任务ID</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Cursor"</span><span class="w">      </span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Type"</span><span class="w">        </span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Parameters"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+        </span><span class="nt">"Cpu"</span><span class="w">     </span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w">
+        </span><span class="nt">"Memory"</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span><span class="w">
+        </span><span class="nt">"Storage"</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mi">500</span><span class="w">
+    </span><span class="p">},</span><span class="w">
+    </span><span class="nt">"Module"</span><span class="w">      </span><span class="p">:</span><span class="w"> </span><span class="s2">"resource"</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Command"</span><span class="w">     </span><span class="p">:</span><span class="w"> </span><span class="s2">"check_resource"</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Timeout"</span><span class="w">     </span><span class="p">:</span><span class="w"> </span><span class="mi">300</span><span class="p">,</span><span class="w">
+    </span><span class="nt">"Retry"</span><span class="w">       </span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre>
+</div>
+
+<p><br /></p>
+
+<h2 id="section-1">五、各执行模块的逻辑</h2>
+
+<div class="language-python highlighter-rouge"><pre class="highlight"><code><span class="err">记</span> <span class="err">$</span><span class="p">{</span><span class="n">msg</span><span class="p">}</span> <span class="err">为</span> <span class="err">本模块收到的消息</span><span class="p">;</span>
+
+<span class="n">step_success</span> <span class="o">=</span> <span class="bp">False</span><span class="p">;</span>
+<span class="n">step_retry</span>   <span class="o">=</span> <span class="err">$</span><span class="p">{</span><span class="n">msg</span><span class="p">}</span><span class="o">.</span><span class="n">Retry</span><span class="p">;</span>
+
+<span class="n">do</span> <span class="p">{</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="n">execStep</span><span class="p">(</span> <span class="err">$</span><span class="p">{</span><span class="n">msg</span><span class="p">}</span><span class="o">.</span><span class="n">Command</span><span class="p">,</span> <span class="err">$</span><span class="p">{</span><span class="n">msg</span><span class="p">}</span><span class="o">.</span><span class="n">Parameters</span> <span class="p">);</span>
+    
+    <span class="k">if</span> <span class="p">(</span> <span class="n">res</span> <span class="err">表明成功</span> <span class="p">)</span> <span class="p">{</span>
+        <span class="err">将</span> <span class="n">res</span> <span class="err">中的必要数据</span> <span class="err">写入</span> <span class="err">$</span><span class="p">{</span><span class="n">msg</span><span class="p">}</span><span class="o">.</span><span class="n">Parameters</span><span class="err">，以供后续子步骤使用</span><span class="p">;</span>
+        <span class="n">step_success</span> <span class="o">=</span> <span class="bp">True</span><span class="p">;</span>
+    <span class="p">}</span>
+    
+    <span class="n">step_retry</span><span class="o">--</span><span class="p">;</span>
+<span class="p">}</span> <span class="k">while</span><span class="p">(</span> <span class="n">step_success</span> <span class="o">==</span> <span class="bp">False</span> <span class="o">&amp;&amp;</span> <span class="n">step_retry</span> <span class="o">&gt;=</span> <span class="mi">0</span> <span class="p">);</span>
+
+<span class="err">查询</span><span class="n">DB</span><span class="err">，记</span> <span class="err">$</span><span class="p">{</span><span class="n">task</span><span class="p">}</span> <span class="err">为所属的任务</span><span class="p">;</span>
+
+<span class="k">if</span> <span class="p">(</span> <span class="n">step_success</span> <span class="o">&amp;&amp;</span> <span class="err">$</span><span class="p">{</span><span class="n">msg</span><span class="p">}</span><span class="o">.</span><span class="n">Type</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">)</span> <span class="p">{</span>
+    <span class="o">//</span> <span class="err">成功</span> <span class="o">&amp;</span> <span class="err">本次执行是正常流程，则准备</span> <span class="err">：下一步</span> <span class="err">正常子步骤</span>
+<span class="p">}</span>
+
+<span class="k">if</span> <span class="p">(</span> <span class="n">step_success</span> <span class="o">&amp;&amp;</span> <span class="err">$</span><span class="p">{</span><span class="n">msg</span><span class="p">}</span><span class="o">.</span><span class="n">Type</span> <span class="o">==</span> <span class="mi">1</span> <span class="p">)</span> <span class="p">{</span>
+    <span class="o">//</span> <span class="err">成功</span> <span class="o">&amp;</span> <span class="err">本次执行是回滚流程，则准备</span> <span class="err">：上一步</span> <span class="err">回滚子步骤</span>
+<span class="p">}</span>
+
+<span class="k">if</span> <span class="p">(</span> <span class="err">!</span><span class="n">step_success</span> <span class="o">&amp;&amp;</span> <span class="err">$</span><span class="p">{</span><span class="n">msg</span><span class="p">}</span><span class="o">.</span><span class="n">Type</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">)</span> <span class="p">{</span>
+    <span class="o">//</span> <span class="err">失败</span> <span class="o">&amp;</span> <span class="err">本次执行是正常流程，则准备</span> <span class="err">：这一步</span> <span class="err">回滚子步骤</span>
+<span class="p">}</span>
+
+<span class="k">if</span> <span class="p">(</span> <span class="err">!</span><span class="n">step_success</span> <span class="o">&amp;&amp;</span> <span class="err">$</span><span class="p">{</span><span class="n">msg</span><span class="p">}</span><span class="o">.</span><span class="n">Type</span> <span class="o">==</span> <span class="mi">1</span> <span class="p">)</span> <span class="p">{</span>
+    <span class="o">//</span> <span class="err">失败</span> <span class="o">&amp;</span> <span class="err">本次执行是回滚流程，则准备</span> <span class="err">：</span><span class="o">&lt;</span><span class="err">系统异常告警</span><span class="o">&gt;</span>
+<span class="p">}</span>
+</code></pre>
+</div>
+
+<p>注，上述伪代码没有将 Timeout 考虑进去，它应是在最外面套一层。</p>
+
+      </article>
+      <hr>
+        <div class="bdsharebuttonbox">
+            <a href="#" class="bds_more" data-cmd="more"></a>
+            <a href="#" class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+            <a href="#" class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+            <a href="#" class="bds_douban" data-cmd="douban" title="分享到豆瓣网"></a>
+            <a href="#" class="bds_fbook" data-cmd="fbook" title="分享到Facebook"></a>
+            <a href="#" class="bds_copy" data-cmd="copy" title="分享到复制网址"></a>
+        </div>
+        <script>
+            window._bd_share_config={"common":{"bdSnsKey":{},"bdText":"","bdMini":"2","bdMiniList":false,"bdPic":"","bdStyle":"1","bdSize":"24"},"share":{}};with(document)0[(getElementsByTagName('head')[0]||body).appendChild(createElement('script')).src='http://bdimg.share.baidu.com/static/api/js/share.js?v=89860593.js?cdnversion='+~(-new Date()/36e5)];
+        </script>
+    </div>
+	
+    <!-- duoshuo.com javascript include code. -->    
+    
+    <!-- disqus.com javascript include code. -->
+	
+    <div class="post-area post comment">
+        <div id="disqus_thread"></div>
+    </div>
+	<script>
+		var disqus_config = function () {
+			this.page.url = "http://340StarObserver.github.io/2018/07/29/Async-Task/"; 
+			this.page.identifier = "/2018/07/29/Async-Task"; 
+		};
+		(function() {
+			var d = document, s = d.createElement('script');
+			s.src = '/static/js/embed.js';
+			s.setAttribute('data-timestamp', +new Date());
+			(d.head || d.body).appendChild(s);
+		})();
+	</script>
+	
+    
+  </div>
+  
+  <div id="content" class="col-sm-3">
+    <!-- <div id="myAffix" class="shadow-bottom-center hidden-xs" data-spy="affix" data-offset-top="0" data-offset-bottom="-20"> -->
+    <div id="myAffix" class="shadow-bottom-center hidden-xs" >
+      <div class="categories-list-header">
+        Content
+      </div>
+      <div class="content-text"></div>
+    </div>
+  </div>
+  
+</div>
+    </div>
+
+    
+    <div id="top" data-toggle="tooltip" data-placement="left" title="back to top">
+      <a href="javascript:;">
+        <div class="arrow"></div>
+        <div class="stick"></div>
+      </a>
+    </div>
+
+    <footer class="">
+  <div class="container">
+    <div class="row">
+      <div class="col-md-12">
+        <a href="mailto:lvyang@ippclub.org"><span class="glyphicon glyphicon-envelope"></span> lvyang@ippclub.org</a>
+        <span class="point"> · </span>
+        
+          <a href="https://github.com/340StarObserver">
+            <span class="icon">
+              <svg viewBox="0 0 16 16">
+                <path fill="#aaa" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+              </svg>
+            </span>
+            Github
+            <!-- <span>340StarObserver</span> -->
+          </a>
+          
+          <span class="point"> · </span>
+          <span><a href="https://github.com/340StarObserver/340StarObserver.github.io/_posts/Distributed/2018-07-28-Async-Task.md">View source</a></span>
+          <span class="point"> · </span>
+          <span><a class="newpost" href="javascript:;">New post</a></span>
+		  <span class="point"> · </span>
+          <span><a href="/feed.xml">RSS</a></span>
+          <span class="point"> · </span>
+          <span>&copy; 2016 340号恒星观测员</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+    <script type="text/javascript">
+    function OnClickNewPost()
+    {
+        var title = prompt("Please enter title of your post");
+        if (title!=null){
+            title = title.replace(" ", "-");
+            var currentdate = new Date();
+            var urlNewPage = "https://github.com/340StarObserver/340StarObserver.github.io/?filename=_posts/" 
+                + currentdate.getFullYear() + "-" + (currentdate.getMonth()+1) + "-" + currentdate.getDate() + "-" + title + ".md";
+                
+            var defaultText =  [
+                '---',
+                'layout: post',
+                'comments: true',
+                'categories: diary',
+                '---',
+                '## Title',
+                'text'
+                ].join('\n');
+            urlNewPage += "&value=" + encodeURIComponent(defaultText);
+            window.open(urlNewPage);
+        }
+    }
+    
+    $(function() {
+      // CreateNewPostLinks
+      $('.newpost').each(function(){
+          $(this).click(OnClickNewPost);
+      });
+    });
+</script>
+  
+  </body>
+</html>

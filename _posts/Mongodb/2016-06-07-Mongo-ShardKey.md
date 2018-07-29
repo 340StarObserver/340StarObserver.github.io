@@ -86,11 +86,11 @@ comments: true
         但是在单机环境下是很难保证的，因为有时候索引的大小甚至比实际数据还要大。  
         所以此时只能依赖分片了，那分成多少片合适呢？每片的内存需要多大呢？这就要求我们必须知道索引和热数据的大小。  
       
-![db.stats()]({{ site.url }}/static/img/1.png)
+![db.stats()]({{ site.url }}/static/img/2016-06-07-Mongo-ShardKey_stats.png)
 
         如上图，切换到你的库，然后通过db.stats()来查看，其中的indexSize便是这个库下的所有索引的字节数
         
-![db.serverStatus()]({{ site.url }}/static/img/2.png)
+![db.serverStatus()]({{ site.url }}/static/img/2016-06-07-Mongo-ShardKey_serverStatus.png)
 
         如上图，进入admin库，然后通过db.serverStatus()来查看，它会打印出最近15分钟内的情况。  
         此处我只打印出extra_info这个字段（当然很建议也去看看其他字段的信息） :  

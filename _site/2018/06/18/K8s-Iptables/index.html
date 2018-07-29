@@ -100,7 +100,7 @@
 
 <p>我画了一张数据包的流向图：</p>
 
-<p><img src="http://localhost:4000/static/img/k8s_net.png" alt="k8s_net" /></p>
+<p><img src="http://localhost:4000/static/img/2018-06-18-K8s-Iptables_k8s_net.png" alt="k8s_net" /></p>
 
 <p>如上图所示，在外部访问 web.tdsql.pr.fsphere.cn，它是某数据库的管理端页面。数据包先后经过几大步骤：
 - 第一步：通过外部dns，将域名解析到前置的nginx上（它是公网接入机，因为k8s集群是位于VPC里的，不建议分配公网IP）。且凡是需要在外部访问的域名，都需要配置外部dns。
